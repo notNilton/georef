@@ -1,10 +1,13 @@
 package com.nilbyte.georef.sync
 
 import com.nilbyte.georef.data.local.LocalDatabase
+import com.nilbyte.georef.data.local.OfflineMapTileStore
 import com.nilbyte.georef.data.remote.KtorSyncApiClient
 import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.SyncPushRequest
 import com.nilbyte.georef.domain.model.SyncStatus
+import com.nilbyte.georef.domain.pdf.GeoPdfExtractor
+import com.nilbyte.georef.domain.pdf.GeoPdfMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -26,21 +29,61 @@ sealed class SyncState {
 class IdempotentSyncEngine(
     val clientId: String,
     val localDatabase: LocalDatabase = LocalDatabase(),
-    val apiClient: KtorSyncApiClient = KtorSyncApiClient()
+    val apiClient: KtorSyncApiClient = KtorSyncApiClient(),
+    val offlineMapTileStore: OfflineMapTileStore = OfflineMapTileStore()
 ) {
     private val syncScope = CoroutineScope(Dispatchers.IO)
     private val syncMutex = Mutex()
+    private val pdfExtractor = GeoPdfExtractor()
 
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
+
+    private val _selectedGeoPdf = MutableStateFlow<GeoPdfMetadata?>(null)
+    val selectedGeoPdf: StateFlow<GeoPdfMetadata?> = _selectedGeoPdf.asStateFlow()
 
     private var lastSyncServerTimestamp: Long = 0L
 
     val recordsFlow: StateFlow<List<GeorefRecord>> = localDatabase.recordsFlow
 
     /**
+     * Process an incoming PDF file, extracting embedded GeoPDF metadata (/GPTS, /BBox)
+     * and coordinates, creating a local offline record for field use.
+     */
+    suspend fun processGeoPdfFile(pdfBytes: ByteArray, fileName: String): GeoPdfMetadata {
+        val metadata = pdfExtractor.extractGeoMetadata(pdfBytes, fileName)
+        _selectedGeoPdf.value = metadata
+
+        // Save center point of GeoPDF as a local georeferenced field record
+        val recordId = "pdf-geo-" + metadata.centerPoint.latitude.toString().take(6) + "-" + metadata.centerPoint.longitude.toString().take(6)
+        createFieldRecord(
+            id = recordId,
+            name = "PDF Geo: $fileName",
+            description = "Extraído de PDF | BBox: [${metadata.boundingBox.minLat}, ${metadata.boundingBox.minLng}] a [${metadata.boundingBox.maxLat}, ${metadata.boundingBox.maxLng}]",
+            latitude = metadata.centerPoint.latitude,
+            longitude = metadata.centerPoint.longitude,
+            elevation = metadata.centerPoint.elevation,
+            accuracy = 1.5
+        )
+
+        return metadata
+    }
+
+    /**
+     * Triggers offline tile download for the entire regional bounding box of the active PDF.
+     */
+    fun downloadMapTilesForPdfRegion(minZoom: Int = 12, maxZoom: Int = 15) {
+        val pdfMeta = _selectedGeoPdf.value ?: return
+        offlineMapTileStore.downloadMapTilesForRegion(
+            boundingBox = pdfMeta.boundingBox,
+            regionName = pdfMeta.fileName,
+            minZoom = minZoom,
+            maxZoom = maxZoom
+        )
+    }
+
+    /**
      * Field operation: Create record locally when offline.
-     * Generates client UUID v4, sets PENDING_CREATE state, enqueues to local outbox.
      */
     suspend fun createFieldRecord(
         id: String,
@@ -123,7 +166,6 @@ class IdempotentSyncEngine(
 
         val pendingRecords = localDatabase.getPendingOutbox()
         if (pendingRecords.isEmpty()) {
-            // Also attempt delta pull if server has new records from other field devices
             val pullResult = apiClient.pullSync(clientId, lastSyncServerTimestamp)
             pullResult.onSuccess { pullResp ->
                 for (record in pullResp.records) {
@@ -139,7 +181,6 @@ class IdempotentSyncEngine(
             return state
         }
 
-        // Build Idempotent Push Request
         val request = SyncPushRequest(
             batchId = batchId,
             clientId = clientId,
@@ -150,7 +191,6 @@ class IdempotentSyncEngine(
         val result = apiClient.pushSync(request)
         result.fold(
             onSuccess = { response ->
-                // Process server statuses for pushed records
                 for (itemStatus in response.statuses) {
                     if (itemStatus.status == "ACCEPTED" || itemStatus.status == "IGNORED_STALE") {
                         localDatabase.markSynced(
@@ -161,7 +201,6 @@ class IdempotentSyncEngine(
                     }
                 }
 
-                // Process server changes (remote delta)
                 for (serverRec in response.serverChanges) {
                     localDatabase.saveOrUpdate(
                         serverRec.copy(syncStatus = SyncStatus.SYNCED),

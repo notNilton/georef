@@ -4,18 +4,25 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nilbyte.georef.data.local.TileDownloadState
+import com.nilbyte.georef.domain.model.GeoPoint
 import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.SyncStatus
+import com.nilbyte.georef.domain.pdf.GeoPdfMetadata
 import com.nilbyte.georef.sync.IdempotentSyncEngine
 import com.nilbyte.georef.sync.SyncState
 import kotlinx.coroutines.launch
@@ -24,7 +31,7 @@ import java.util.UUID
 class MainActivity : ComponentActivity() {
 
     private val syncEngine by lazy {
-        IdempotentSyncEngine(clientId = "android-device-" + UUID.randomUUID().toString().take(8))
+        IdempotentSyncEngine(clientId = "android-field-" + UUID.randomUUID().toString().take(8))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,7 +43,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    GeoRefApp(syncEngine)
+                    GeoPdfApp(syncEngine)
                 }
             }
         }
@@ -45,20 +52,18 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GeoRefApp(syncEngine: IdempotentSyncEngine) {
+fun GeoPdfApp(syncEngine: IdempotentSyncEngine) {
     val records by syncEngine.recordsFlow.collectAsState()
     val syncState by syncEngine.syncState.collectAsState()
-    val scope = rememberCoroutineScope()
+    val selectedPdf by syncEngine.selectedGeoPdf.collectAsState()
+    val tileState by syncEngine.offlineMapTileStore.downloadState.collectAsState()
 
-    var nameText by remember { mutableStateOf("") }
-    var descText by remember { mutableStateOf("") }
-    var latText by remember { mutableStateOf("-23.5505") }
-    var lngText by remember { mutableStateOf("-46.6333") }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("GeoRef - Mobile Field Collect") },
+                title = { Text("GeoRef - Leitor de GeoPDF & Mapas Offline", fontSize = 18.sp) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -69,9 +74,9 @@ fun GeoRefApp(syncEngine: IdempotentSyncEngine) {
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(14.dp)
         ) {
-            // Sync status header card
+            // Header: Status Bar
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -86,18 +91,15 @@ fun GeoRefApp(syncEngine: IdempotentSyncEngine) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Status de Sincronização",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("Status da Conexão / Sincronismo", style = MaterialTheme.typography.titleSmall)
                         Text(
                             text = when (val state = syncState) {
-                                is SyncState.Idle -> "Aguardando operações em campo"
+                                is SyncState.Idle -> "Operando em Campo (Offline-First)"
                                 is SyncState.Syncing -> "Sincronizando com backend Go..."
                                 is SyncState.Success -> state.message
                                 is SyncState.OfflineError -> "Modo Offline: ${state.reason}"
@@ -108,75 +110,75 @@ fun GeoRefApp(syncEngine: IdempotentSyncEngine) {
                     }
 
                     Button(
-                        onClick = {
-                            val batchId = "batch-" + UUID.randomUUID().toString()
-                            syncEngine.syncNow(batchId)
-                        },
+                        onClick = { syncEngine.syncNow("batch-" + UUID.randomUUID().toString().take(8)) },
                         enabled = syncState !is SyncState.Syncing
                     ) {
-                        Text("Sincronizar")
+                        Text("Sincronizar", fontSize = 12.sp)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Form to create offline georeferenced point
-            Text("Novo Ponto de Campo (Offline First)", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(
-                value = nameText,
-                onValueChange = { nameText = it },
-                label = { Text("Nome da Amostra/Ponto") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = descText,
-                onValueChange = { descText = it },
-                label = { Text("Descrição / Observação") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = latText,
-                    onValueChange = { latText = it },
-                    label = { Text("Latitude") },
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = lngText,
-                    onValueChange = { lngText = it },
-                    label = { Text("Longitude") },
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            // Section 1: GeoPDF Input & Extraction Action
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("📄 Processar Documento GeoPDF", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Extrai geocoordenadas embutidas (/GPTS, /BBox) e registra o ponto no app.", style = MaterialTheme.typography.bodySmall)
 
-            Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-            Button(
-                onClick = {
-                    if (nameText.isNotBlank()) {
-                        scope.launch {
-                            val recordId = UUID.randomUUID().toString()
-                            syncEngine.createFieldRecord(
-                                id = recordId,
-                                name = nameText,
-                                description = descText,
-                                latitude = latText.toDoubleOrNull() ?: -23.5505,
-                                longitude = lngText.toDoubleOrNull() ?: -46.6333
-                            )
-                            nameText = ""
-                            descText = ""
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val mockGeoPdf = """
+                                        %PDF-1.7
+                                        1 0 obj
+                                        << /Type /Page /LGIDict << /VP [ << /BBox [-46.6400 -23.5600 -46.6200 -23.5400] /GPTS [-23.5505 -46.6333 -23.5450 -46.6250] >> ] >> >>
+                                        endobj
+                                    """.trimIndent()
+                                    syncEngine.processGeoPdfFile(mockGeoPdf.encodeToByteArray(), "Mapa_Geologico_Campo_2026.pdf")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Importar GeoPDF", fontSize = 12.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val mockPdf2 = """
+                                        %PDF-1.4
+                                        /BBox [-43.2000 -22.9000 -43.1700 -22.8800]
+                                        /GPTS [-22.8950 -43.1820]
+                                    """.trimIndent()
+                                    syncEngine.processGeoPdfFile(mockPdf2.encodeToByteArray(), "Relatorio_Agro_Regiao_Leste.pdf")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF673AB7)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("GeoPDF Região Leste", fontSize = 12.sp)
                         }
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Salvar Ponto Localmente")
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Text("Pontos Guardados no Dispositivo (${records.size})", style = MaterialTheme.typography.titleMedium)
+            // Section 2: Display Extracted Geo-Coordinates & Bounding Box
+            selectedPdf?.let { pdfMeta ->
+                GeoPdfMetadataCard(pdfMeta, syncEngine, tileState)
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // Section 3: Georeferenced List
+            Text("📍 Pontos Georreferenciados Salvos (${records.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -185,6 +187,107 @@ fun GeoRefApp(syncEngine: IdempotentSyncEngine) {
                 items(records) { record ->
                     GeorefRecordCard(record)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun GeoPdfMetadataCard(
+    pdfMeta: GeoPdfMetadata,
+    syncEngine: IdempotentSyncEngine,
+    tileState: TileDownloadState
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text("📍 Geocoordenadas Extraídas do PDF", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF1565C0))
+            Text("Arquivo: ${pdfMeta.fileName}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Coordinates in Decimal & DMS Format
+            Text("• Centro Decimal: ${pdfMeta.centerPoint.latitude}, ${pdfMeta.centerPoint.longitude}", fontSize = 12.sp)
+            Text("• Formato DMS: ${pdfMeta.centerPoint.toDmsString()}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("• Projeção: ${pdfMeta.projectionName}", fontSize = 11.sp, color = Color.Gray)
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Bounding box area details
+            Text("🗺️ Caixa Delimitadora (Bounding Box da Região):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Lat: [${pdfMeta.boundingBox.minLat} à ${pdfMeta.boundingBox.maxLat}]", fontSize = 11.sp)
+            Text("Lng: [${pdfMeta.boundingBox.minLng} à ${pdfMeta.boundingBox.maxLng}]", fontSize = 11.sp)
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Interactive Map Widget Mock representation
+            MapViewWidget(pdfMeta.centerPoint, pdfMeta.fileName)
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Offline Map Saver Button & Download Bar
+            Button(
+                onClick = { syncEngine.downloadMapTilesForPdfRegion(minZoom = 12, maxZoom = 14) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("💾 Salvar Mapas da Região Offline")
+            }
+
+            // Tile Download Status
+            when (tileState) {
+                is TileDownloadState.Downloading -> {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { tileState.percentage / 100f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Baixando tiles de mapa da região: ${tileState.current} / ${tileState.total} (${tileState.percentage}%)",
+                        fontSize = 11.sp,
+                        color = Color.DarkGray
+                    )
+                }
+                is TileDownloadState.Completed -> {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("✅ Região baixada com sucesso! ${tileState.totalDownloaded} tiles armazenados offline.", fontSize = 11.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+                }
+                is TileDownloadState.Error -> {
+                    Text("❌ Erro no download: ${tileState.message}", fontSize = 11.sp, color = Color.Red)
+                }
+                else -> {}
+            }
+        }
+    }
+}
+
+@Composable
+fun MapViewWidget(center: GeoPoint, label: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(110.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF81D4FA))
+            .border(1.dp, Color(0xFF0288D1), RoundedCornerShape(8.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("🗺️ Visualizador de Mapa de Campo", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF01579B))
+            Text("Região: $label", fontSize = 11.sp, color = Color(0xFF0277BD))
+            Surface(
+                color = Color.Red,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.padding(top = 4.dp)
+            ) {
+                Text(
+                    "📍 Pin: ${center.latitude.toString().take(7)}, ${center.longitude.toString().take(7)}",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    fontSize = 10.sp,
+                    color = Color.White
+                )
             }
         }
     }
@@ -212,14 +315,9 @@ fun GeorefRecordCard(record: GeorefRecord) {
 
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Coordenadas: ${record.latitude}, ${record.longitude}",
-                fontSize = 12.sp,
-                color = Color.Gray
-            )
-            Text(
-                text = "Versão: ${record.version} | ID: ${record.id.take(8)}...",
+                text = "Coordenadas: ${record.latitude}, ${record.longitude} (DMS: ${GeoPoint(record.latitude, record.longitude).toDmsString()})",
                 fontSize = 11.sp,
-                color = Color.LightGray
+                color = Color.Gray
             )
         }
     }
