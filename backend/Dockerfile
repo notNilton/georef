@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26-alpine AS builder
+FROM docker.io/library/golang:1.26-alpine AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/georef-backend main.go
 
 # Final light container stage
-FROM alpine:3.19
+FROM docker.io/library/alpine:3.19
 
 RUN apk --no-cache add ca-certificates tzdata
 

@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgis/postgis:16-3.4
+    image: docker.io/postgis/postgis:16-3.4
     container_name: georef-db
     environment:
       POSTGRES_USER: georef_user
