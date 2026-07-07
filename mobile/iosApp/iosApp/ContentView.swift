@@ -162,7 +162,7 @@ class GeoRefViewModel: ObservableObject {
 
     init() {
         let clientId = "ios-field-" + UUID().uuidString.prefix(8)
-        self.syncEngine = IdempotentSyncEngine(clientId: String(clientId), localDatabase: LocalDatabase(), apiClient: KtorSyncApiClient(baseUrl: "http://localhost:8080"))
+        self.syncEngine = IdempotentSyncEngine(clientId: String(clientId), localDatabase: LocalDatabase(), apiClient: KtorSyncApiClient(baseUrl: "http://localhost:8085"))
     }
 
     func processMockGeoPdf() {

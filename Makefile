@@ -31,9 +31,9 @@ db-backend:
 
 # 2. Testar Saúde da API
 health:
-	@echo "⏳ Verificando saúde do servidor Go HTTP (http://localhost:8080/health)..."
+	@echo "⏳ Verificando saúde do servidor Go HTTP (http://localhost:8085/health)..."
 	@sleep 2
-	@curl -s http://localhost:8080/health || (echo "\n❌ Servidor Go ainda não está pronto." && exit 1)
+	@curl -s http://localhost:8085/health || (echo "\n❌ Servidor Go ainda não está pronto." && exit 1)
 	@echo "\n✅ Servidor Go respondendo com sucesso!"
 
 # 3. Compilar APK Android

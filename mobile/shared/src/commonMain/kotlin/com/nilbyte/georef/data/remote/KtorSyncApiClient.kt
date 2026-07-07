@@ -16,7 +16,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
 class KtorSyncApiClient(
-    private val baseUrl: String = "http://10.0.2.2:8080" // Default Android Emulator host address
+    private val baseUrl: String = "http://10.0.2.2:8085" // Default Android Emulator host address
 ) {
     val client = HttpClient {
         install(ContentNegotiation) {
