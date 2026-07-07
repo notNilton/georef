@@ -22,6 +22,13 @@
 ##
 ##############################################################################
 
+# Prefer Java 17 for Android Gradle Plugin compatibility
+if [ -d "/usr/lib64/jvm/java-17-openjdk" ]; then
+    export JAVA_HOME="/usr/lib64/jvm/java-17-openjdk"
+elif [ -d "/usr/lib/jvm/java-17-openjdk" ]; then
+    export JAVA_HOME="/usr/lib/jvm/java-17-openjdk"
+fi
+
 # Attempt to set APP_HOME
 PRG="$0"
 while [ -h "$PRG" ]; do
