@@ -36,6 +36,15 @@ android {
         versionName = "1.0.0"
     }
 
+    sourceSets {
+        getByName("main") {
+            manifest.srcFile("src/main/AndroidManifest.xml")
+        }
+        getByName("debug") {
+            manifest.srcFile("src/main/AndroidManifest.xml")
+        }
+    }
+
     buildFeatures {
         compose = true
     }
