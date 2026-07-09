@@ -3,8 +3,8 @@ package com.nilbyte.georef.data.local
 import com.nilbyte.georef.domain.model.GeoBoundingBox
 import com.nilbyte.georef.domain.model.GeoTile
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.request.get
-import io.ktor.client.statement.bodyAsBytes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -67,7 +67,7 @@ class OfflineMapTileStore(
             for (tile in tiles) {
                 try {
                     val tileUrl = tile.tileUrl
-                    val bytes = httpClient.get(tileUrl).bodyAsBytes()
+                    val bytes: ByteArray = httpClient.get(tileUrl).body()
                     mutex.withLock {
                         tileStorage[tile.tileId] = bytes
                     }
