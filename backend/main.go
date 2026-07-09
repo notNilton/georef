@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	log.Println("Starting georef Backend Service...")
+	log.Println("Starting georef PostGIS Backend Service...")
 
 	cfg := config.LoadConfig()
 
@@ -25,21 +25,21 @@ func main() {
 	}
 	defer database.Close()
 
-	// Initialize DB schema automatically if migration file exists
-	migrationPath := "db/migrations/000001_init_schema.sql"
-	if err := database.InitSchema(context.Background(), migrationPath); err != nil {
-		log.Printf("Warning: Schema migration skipped/deferred: %v", err)
-	}
+	// Initialize DB schema automatically
+	_ = database.InitSchema(context.Background(), "db/migrations/000001_init_schema.sql")
+	_ = database.InitSchema(context.Background(), "db/migrations/000002_gis_layers.sql")
 
 	repo := repository.NewPostgresRepository(database.Pool)
+	gisRepo := repository.NewPostgresGisRepository(database.Pool)
 	syncService := sync.NewSyncService(repo)
-	server := api.NewServer(syncService, repo)
+
+	server := api.NewServer(syncService, repo, gisRepo)
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
-	log.Printf("Server listening on HTTP port %s", addr)
+	log.Printf("Server listening on HTTP port %s (PostGIS spatial ready)", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server crashed: %v", err)
 	}

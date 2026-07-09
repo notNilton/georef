@@ -12,7 +12,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./backend/db/migrations:/docker-entrypoint-initdb.d
+      - ./backend/db/migrations:/docker-entrypoint-initdb.d:z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U georef_user -d georef_db"]
       interval: 5s
