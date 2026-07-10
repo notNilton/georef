@@ -3,135 +3,23 @@ import shared
 
 struct ContentView: View {
     @StateObject private var viewModel = GeoRefViewModel()
+    @State private var selectedTab: Int = 1 // Default: Center Tab (Mapa Mundi)
 
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 14) {
-                    // PostGIS Status Header
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text("PostGIS & Sincronização em Campo")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text(viewModel.syncStatusMessage)
-                                .font(.subheadline)
-                                .bold()
-                        }
-                        Spacer()
-                        Button(action: { viewModel.syncNow() }) {
-                            Text("Sincronizar PostGIS")
-                                .font(.footnote)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(6)
-                        }
-                    }
-                    .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(10)
+        TabView(selection: $selectedTab) {
+            // TAB 0 (Esquerda): Todos os Mapas Importados
+            NavigationView {
+                VStack(alignment: .leading) {
+                    Text("📁 Meus Mapas Importados (\(viewModel.gisLayers.count))")
+                        .font(.headline)
+                        .padding(.horizontal)
 
-                    // Global GIS Map View Widget with Overlay
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("🌍 VISUALIZADOR GLOBAL GIS (iOS)")
-                            .font(.caption)
-                            .bold()
-                            .foregroundColor(.blue)
+                    Text("Toque em qualquer mapa para centralizá-lo e exibi-lo sobreposto no Mapa Mundi.")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .padding(.horizontal)
 
-                        if let active = viewModel.selectedLayer {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Sobreposição Ativa: \(active.name) (\(active.fileType.name))")
-                                    .font(.subheadline)
-                                    .bold()
-                                Text("Centro: \(active.centerLat), \(active.centerLng)")
-                                    .font(.caption)
-                                Text("BBox: [\(active.minLat), \(active.minLng)] à [\(active.maxLat), \(active.maxLng)]")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-
-                                ZStack {
-                                    Rectangle()
-                                        .fill(Color.blue.opacity(0.2))
-                                        .frame(height: 100)
-                                        .cornerRadius(8)
-                                    VStack {
-                                        Text("🗺️ Visualizador GIS Sobreposto")
-                                            .font(.caption)
-                                            .bold()
-                                        Text("Pin: \(active.centerLat), \(active.centerLng)")
-                                            .font(.caption2)
-                                            .padding(4)
-                                            .background(Color.red)
-                                            .foregroundColor(.white)
-                                            .cornerRadius(4)
-                                    }
-                                }
-
-                                Button(action: { viewModel.downloadRegionalTiles() }) {
-                                    HStack {
-                                        Image(systemName: "arrow.down.doc")
-                                        Text("Salvar Tiles da Região Offline")
-                                    }
-                                    .font(.caption)
-                                    .bold()
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .background(Color.green)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(6)
-                                }
-                            }
-                        } else {
-                            Text("Nenhum mapa selecionado. Toque em um mapa importado abaixo.")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    .padding()
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(10)
-
-                    // GIS File Import Section
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("📂 Importar Exportação GIS (iOS)").font(.headline)
-                        HStack(spacing: 8) {
-                            Button(action: { viewModel.importMockGeoPdf() }) {
-                                Text("GeoPDF")
-                                    .font(.caption)
-                                    .padding(8)
-                                    .background(Color.red)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(6)
-                            }
-                            Button(action: { viewModel.importMockGeoJson() }) {
-                                Text("GeoJSON")
-                                    .font(.caption)
-                                    .padding(8)
-                                    .background(Color.teal)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(6)
-                            }
-                            Button(action: { viewModel.importMockKml() }) {
-                                Text("KML")
-                                    .font(.caption)
-                                    .padding(8)
-                                    .background(Color.purple)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(6)
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(Color(UIColor.tertiarySystemBackground))
-                    .cornerRadius(10)
-
-                    // Saved Layers List
-                    VStack(alignment: .leading) {
-                        Text("🗺️ Mapas de Região Salvos (\(viewModel.gisLayers.count))")
-                            .font(.headline)
-
+                    List {
                         ForEach(viewModel.gisLayers, id: \.id) { layer in
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
@@ -148,27 +36,154 @@ struct ContentView: View {
                                     .font(.caption)
                                     .foregroundColor(.gray)
                             }
-                            .padding()
-                            .background(viewModel.selectedLayer?.id == layer.id ? Color.blue.opacity(0.2) : Color(UIColor.secondarySystemBackground))
-                            .cornerRadius(8)
+                            .contentShape(Rectangle())
                             .onTapGesture {
                                 viewModel.selectLayer(layer)
+                                selectedTab = 1 // Switch to World Map tab automatically!
                             }
                         }
                     }
                 }
-                .padding()
+                .navigationTitle("Importações")
             }
-            .navigationTitle("GeoRef GIS iOS")
+            .tabItem {
+                Label("Importações", systemImage: "folder.fill")
+            }
+            .tag(0)
+
+            // TAB 1 (Centro/Principal): Mapa Mundi Global Interactive View
+            NavigationView {
+                VStack(spacing: 12) {
+                    Text("🌍 VISUALIZADOR GLOBAL GIS (iOS)")
+                        .font(.caption)
+                        .bold()
+                        .foregroundColor(.blue)
+
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.blue.opacity(0.15))
+                            .cornerRadius(12)
+                        
+                        VStack(spacing: 8) {
+                            Image(systemName: "mappin.and.ellipse")
+                                .font(.largeTitle)
+                                .foregroundColor(viewModel.selectedLayer != nil ? .red : .gray)
+
+                            if let active = viewModel.selectedLayer {
+                                Text("SOBREPOSIÇÃO ATIVA: \(active.name)")
+                                    .font(.subheadline)
+                                    .bold()
+                                    .padding(6)
+                                    .background(Color.green)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(6)
+
+                                Text("📍 Centro: \(active.centerLat), \(active.centerLng)")
+                                    .font(.caption)
+                                    .bold()
+
+                                Text("Formato DMS: \(active.centerPoint.toDmsString())")
+                                    .font(.caption2)
+
+                                Text("BBox: [\(active.minLat), \(active.minLng)] à [\(active.maxLat), \(active.maxLng)]")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+
+                                Button(action: { viewModel.downloadRegionalTiles() }) {
+                                    HStack {
+                                        Image(systemName: "square.and.arrow.down")
+                                        Text("Salvar Tiles da Região Offline")
+                                    }
+                                    .font(.caption)
+                                    .bold()
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.blue)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(6)
+                                }
+                            } else {
+                                Text("Nenhum mapa sobreposto selecionado.")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                Text("Selecione um mapa na aba 'Importações' para posicionar sobreposto.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding()
+                    }
+                    .padding(.horizontal)
+
+                    Spacer()
+                }
+                .navigationTitle("Mapa Mundi")
+            }
+            .tabItem {
+                Label("Mapa Mundi", systemImage: "globe")
+            }
+            .tag(1)
+
+            // TAB 2 (Direita): Importar Dados
+            NavigationView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("📥 Importar Novos Dados e Arquivos GIS")
+                        .font(.headline)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("📄 Selecionar Arquivos do Dispositivo").font(.subheadline).bold()
+
+                        Button(action: {
+                            viewModel.importMockGeoPdf()
+                            selectedTab = 1
+                        }) {
+                            HStack {
+                                Image(systemName: "doc.richtext")
+                                Text("Importar GeoPDF (.pdf)")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.red)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+
+                        Button(action: {
+                            viewModel.importMockGeoJson()
+                            selectedTab = 1
+                        }) {
+                            HStack {
+                                Image(systemName: "map")
+                                Text("Importar GeoJSON (.geojson)")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.teal)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                    }
+                    .padding()
+                    .background(Color(UIColor.tertiarySystemBackground))
+                    .cornerRadius(10)
+
+                    Spacer()
+                }
+                .padding()
+                .navigationTitle("Importar Dados")
+            }
+            .tabItem {
+                Label("Importar Dados", systemImage: "square.and.arrow.down.fill")
+            }
+            .tag(2)
         }
     }
 }
 
 class GeoRefViewModel: ObservableObject {
-    @Published var syncStatusMessage: String = "PostGIS Pronto (Offline)"
+    @Published var syncStatusMessage: String = "PostGIS Pronto"
     @Published var selectedLayer: GisLayer? = nil
     @Published var gisLayers: [GisLayer] = []
-    @Published var records: [GeorefRecord] = []
 
     private let syncEngine: IdempotentSyncEngine
 
@@ -193,16 +208,6 @@ class GeoRefViewModel: ObservableObject {
         """
         Task {
             let layer = try await syncEngine.importGisDocument(fileBytes: geoJsonStr.data(using: .utf8) ?? Data(), fileName: "Talhao_Agro.geojson")
-            DispatchQueue.main.async {
-                self.selectedLayer = layer
-            }
-        }
-    }
-
-    func importMockKml() {
-        let kmlStr = "<kml><Placemark><coordinates>-47.8828,-15.7939</coordinates></Placemark></kml>"
-        Task {
-            let layer = try await syncEngine.importGisDocument(fileBytes: kmlStr.data(using: .utf8) ?? Data(), fileName: "Fazenda_KML.kml")
             DispatchQueue.main.async {
                 self.selectedLayer = layer
             }
