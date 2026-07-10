@@ -1,8 +1,13 @@
 package com.nilbyte.georef.android
 
+import android.content.Context
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,12 +21,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nilbyte.georef.data.local.TileDownloadState
 import com.nilbyte.georef.domain.model.GeoPoint
-import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
 import com.nilbyte.georef.domain.model.SyncStatus
@@ -55,6 +60,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GisInteractiveApp(syncEngine: IdempotentSyncEngine) {
+    val context = LocalContext.current
     val gisLayers by syncEngine.gisLayersFlow.collectAsState()
     val activeGisLayer by syncEngine.selectedGisLayer.collectAsState()
     val syncState by syncEngine.syncState.collectAsState()
@@ -62,10 +68,40 @@ fun GisInteractiveApp(syncEngine: IdempotentSyncEngine) {
 
     val scope = rememberCoroutineScope()
 
+    // Native Android PDF File Picker Launcher
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                val bytes = readBytesFromUri(context, it)
+                val fileName = getFileNameFromUri(context, it) ?: "Mapa_GeoPDF.pdf"
+                if (bytes != null && bytes.isNotEmpty()) {
+                    syncEngine.processGeoPdfFile(bytes, fileName)
+                }
+            }
+        }
+    }
+
+    // Native Android Generic File Picker Launcher (.pdf, .geojson, .json, .kml)
+    val genericGisPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                val bytes = readBytesFromUri(context, it)
+                val fileName = getFileNameFromUri(context, it) ?: "Export_GIS.geojson"
+                if (bytes != null && bytes.isNotEmpty()) {
+                    syncEngine.importGisDocument(bytes, fileName)
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("GeoRef - Interação GIS & Mapas Sobrepostos", fontSize = 17.sp) },
+                title = { Text("GeoRef - Leitor PDF & Interação GIS", fontSize = 17.sp) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -115,7 +151,7 @@ fun GisInteractiveApp(syncEngine: IdempotentSyncEngine) {
                         onClick = { syncEngine.syncNow("batch-" + UUID.randomUUID().toString().take(8)) },
                         enabled = syncState !is SyncState.Syncing
                     ) {
-                        Text("Sincronizar PostGIS", fontSize = 11.sp)
+                        Text("Sincronizar", fontSize = 11.sp)
                     }
                 }
             }
@@ -128,54 +164,61 @@ fun GisInteractiveApp(syncEngine: IdempotentSyncEngine) {
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Section 2: Import Map Exports Action (GeoPDF, GeoJSON, KML, GeoTIFF)
+            // Section 2: Native Android System File Picker for PDF / GIS Files
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
-                    Text("📂 Importar Mapa da Região (GIS Export)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    Text("Suporta GeoPDF, GeoJSON, KML e GeoTIFF. Clique para sobrepor no mapa.", fontSize = 11.sp)
+                    Text("📂 Abrir e Importar Arquivo PDF / GIS do Aparelho", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text("Selecione um arquivo PDF ou mapa exportado salvo no seu celular.", fontSize = 11.sp)
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { pdfPickerLauncher.launch("application/pdf") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("📄 Selecionar PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { genericGisPickerLauncher.launch("*/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00796B)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("🗺️ Selecionar GIS", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(6.dp))
 
+                    // Demo / Test Simulation Row
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(
+                        OutlinedButton(
                             onClick = {
                                 scope.launch {
                                     val mockPdf = "%PDF-1.7 /BBox [-46.6400 -23.5600 -46.6200 -23.5400] /GPTS [-23.5505 -46.6333]"
-                                    syncEngine.importGisDocument(mockPdf.encodeToByteArray(), "Mapa_Geologico.pdf")
+                                    syncEngine.processGeoPdfFile(mockPdf.encodeToByteArray(), "Demo_GeoPDF.pdf")
                                 }
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("GeoPDF", fontSize = 10.sp)
+                            Text("Demo PDF", fontSize = 10.sp)
                         }
 
-                        Button(
+                        OutlinedButton(
                             onClick = {
                                 scope.launch {
                                     val mockGeoJson = """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[-43.1820,-22.8950]}}]}"""
-                                    syncEngine.importGisDocument(mockGeoJson.encodeToByteArray(), "Talhoes_Agro.geojson")
+                                    syncEngine.importGisDocument(mockGeoJson.encodeToByteArray(), "Demo_GeoJSON.geojson")
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("GeoJSON", fontSize = 10.sp)
-                        }
-
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    val mockKml = "<kml><Placemark><coordinates>-47.8828,-15.7939</coordinates></Placemark></kml>"
-                                    syncEngine.importGisDocument(mockKml.encodeToByteArray(), "Fazenda_Leste.kml")
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF673AB7)),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("KML", fontSize = 10.sp)
+                            Text("Demo GeoJSON", fontSize = 10.sp)
                         }
                     }
                 }
@@ -184,7 +227,7 @@ fun GisInteractiveApp(syncEngine: IdempotentSyncEngine) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // Section 3: List of Imported Map Layers (Click to overlay)
-            Text("🗺️ Mapas de Região Salvos (${gisLayers.size}) - Toque para sobrepor no mapa", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("🗺️ Mapas de Região Salvos (${gisLayers.size}) - Toque para sobrepor", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -200,6 +243,32 @@ fun GisInteractiveApp(syncEngine: IdempotentSyncEngine) {
             }
         }
     }
+}
+
+// Helper function to read byte array from Android ContentResolver URI
+private fun readBytesFromUri(context: Context, uri: Uri): ByteArray? {
+    return try {
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            inputStream.readBytes()
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
+// Helper function to get original filename from ContentResolver URI
+private fun getFileNameFromUri(context: Context, uri: Uri): String? {
+    var fileName: String? = null
+    val cursor = context.contentResolver.query(uri, null, null, null, null)
+    cursor?.use {
+        if (it.moveToFirst()) {
+            val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex != -1) {
+                fileName = it.getString(nameIndex)
+            }
+        }
+    }
+    return fileName
 }
 
 @Composable
@@ -248,12 +317,12 @@ fun GlobalGisMapViewWidget(
                             color = Color(0xFF004D40)
                         )
                         Text(
-                            text = "Bounding Box BBox: [${activeLayer.minLat}, ${activeLayer.minLng}] à [${activeLayer.maxLat}, ${activeLayer.maxLng}]",
+                            text = "Bounding Box: [${activeLayer.minLat}, ${activeLayer.minLng}] à [${activeLayer.maxLat}, ${activeLayer.maxLng}]",
                             fontSize = 9.sp,
                             color = Color.DarkGray
                         )
                     } else {
-                        Text("Nenhuma camada de região selecionada. Clique em um mapa abaixo.", fontSize = 11.sp, color = Color.DarkGray)
+                        Text("Nenhum mapa selecionado. Escolha um PDF ou mapa abaixo.", fontSize = 11.sp, color = Color.DarkGray)
                     }
                 }
             }
