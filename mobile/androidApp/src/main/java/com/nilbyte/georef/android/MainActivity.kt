@@ -55,7 +55,6 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GisInteractiveApp(syncEngine: IdempotentSyncEngine) {
-    val records by syncEngine.recordsFlow.collectAsState()
     val gisLayers by syncEngine.gisLayersFlow.collectAsState()
     val activeGisLayer by syncEngine.selectedGisLayer.collectAsState()
     val syncState by syncEngine.syncState.collectAsState()

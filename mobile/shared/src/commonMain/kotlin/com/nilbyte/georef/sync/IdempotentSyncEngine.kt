@@ -184,7 +184,7 @@ class IdempotentSyncEngine(
                 layers = pendingGisLayers
             )
             val gisRes = apiClient.pushGisSync(gisReq)
-            gisRes.onSuccess { res ->
+            gisRes.onSuccess { _ ->
                 for (l in pendingGisLayers) {
                     gisLocalDatabase.markSynced(l.id, l.version, Clock.System.now().toEpochMilliseconds())
                 }

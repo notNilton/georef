@@ -140,7 +140,7 @@ class GisFormatImporter {
         return Pair(box, features)
     }
 
-    private fun parseGeoTiff(content: String): Pair<GeoBoundingBox, List<GisFeature>> {
+    private fun parseGeoTiff(_content: String): Pair<GeoBoundingBox, List<GisFeature>> {
         val box = GeoBoundingBox(-15.7939, -47.8828, -15.7700, -47.8600)
         val features = listOf(
             GisFeature("geotiff-1", "Raster Satélite GeoTIFF", "RASTER", box.center, mapOf("resolucao" to "10m"))
