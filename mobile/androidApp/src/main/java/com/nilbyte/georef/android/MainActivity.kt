@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -19,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,8 +31,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.nilbyte.georef.data.local.TileDownloadState
-import com.nilbyte.georef.domain.model.GeoPoint
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
 import com.nilbyte.georef.sync.IdempotentSyncEngine
@@ -74,7 +75,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("GeoRef GIS - Sistema de Mapas", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+                title = { Text("GeoRef - OpenStreetMap & GIS", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -82,21 +83,18 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
         },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
-                // Tab 0: Esquerda - Todos os Imports
                 NavigationBarItem(
                     selected = selectedTabIndex == 0,
                     onClick = { selectedTabIndex = 0 },
                     icon = { Icon(Icons.Default.List, contentDescription = "Importações") },
                     label = { Text("📁 Importações (${gisLayers.size})", fontSize = 11.sp) }
                 )
-                // Tab 1: Centro - Mapa Mundi Principal
                 NavigationBarItem(
                     selected = selectedTabIndex == 1,
                     onClick = { selectedTabIndex = 1 },
                     icon = { Icon(Icons.Default.LocationOn, contentDescription = "Mapa Mundi") },
-                    label = { Text("🌍 Mapa Mundi", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                    label = { Text("🌍 Mapa Mundi OSM", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                 )
-                // Tab 2: Direita - Importar Dados
                 NavigationBarItem(
                     selected = selectedTabIndex == 2,
                     onClick = { selectedTabIndex = 2 },
@@ -117,10 +115,10 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     activeLayer = activeGisLayer,
                     onSelectLayer = { layer ->
                         syncEngine.selectGisLayerForMapOverlay(layer)
-                        selectedTabIndex = 1 // Auto switch to World Map tab on selection!
+                        selectedTabIndex = 1 // Switch to World Map tab automatically!
                     }
                 )
-                1 -> WorldMapTabScreen(
+                1 -> WorldMapOpenStreetMapTabScreen(
                     activeLayer = activeGisLayer,
                     syncEngine = syncEngine,
                     tileState = tileState
@@ -129,7 +127,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     syncEngine = syncEngine,
                     syncState = syncState,
                     onImportSuccess = {
-                        selectedTabIndex = 1 // Auto switch to World Map tab on new import!
+                        selectedTabIndex = 1 // Switch to World Map tab on new import!
                     }
                 )
             }
@@ -138,7 +136,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 }
 
 // ==========================================
-// ABA 1 (ESQUERDA): Todos os Mapas Importados
+// ABA 1 (ESQUERDA): Meus Mapas Importados
 // ==========================================
 @Composable
 fun ImportsTabScreen(
@@ -148,7 +146,7 @@ fun ImportsTabScreen(
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
         Text("📁 Meus Mapas e Camadas Importadas (${gisLayers.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("Toque em qualquer mapa para centralizá-lo e exibi-lo sobreposto no Mapa Mundi.", fontSize = 12.sp, color = Color.Gray)
+        Text("Toque em qualquer mapa para centralizá-lo e exibi-lo sobreposto no OpenStreetMap.", fontSize = 12.sp, color = Color.Gray)
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -174,137 +172,167 @@ fun ImportsTabScreen(
 }
 
 // ==========================================
-// ABA 2 (CENTRO/PRINCIPAL): Mapa Mundi Interactive View
+// ABA 2 (CENTRO/PRINCIPAL): Mapa Mundi OpenStreetMap Interativo
 // ==========================================
 @Composable
-fun WorldMapTabScreen(
+fun WorldMapOpenStreetMapTabScreen(
     activeLayer: GisLayer?,
     syncEngine: IdempotentSyncEngine,
     tileState: TileDownloadState
 ) {
     var isSatelliteMode by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        // Map Controls Header
+    Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("🌍 Mapa Mundi Global GIS", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Column {
+                Text("🗺️ Mapa Mundi OpenStreetMap", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Sem Chave de API • Gratuito & Offline Ready", fontSize = 11.sp, color = Color.Gray)
+            }
             FilterChip(
                 selected = isSatelliteMode,
                 onClick = { isSatelliteMode = !isSatelliteMode },
-                label = { Text(if (isSatelliteMode) "🛰️ Satélite" else "🗺️ Vetorial") }
+                label = { Text(if (isSatelliteMode) "🛰️ Satélite" else "🗺️ Relação Ruas") }
             )
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Interactive World Map Widget
-        Card(
+        // OpenStreetMap Interactive Leaflet Viewer
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
-            colors = CardDefaults.cardColors(
-                containerColor = if (isSatelliteMode) Color(0xFF1C2833) else Color(0xFFE0F7FA)
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                .weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.5.dp, Color(0xFF0288D1), RoundedCornerShape(12.dp))
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(1.dp, Color(0xFF00838F), RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
+            OpenStreetMapWebView(
+                activeLayer = activeLayer,
+                isSatelliteMode = isSatelliteMode
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Selected Layer Metadata Card & Offline Tile Saver
+        if (activeLayer != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE1F5FE))
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
-                    Icon(
-                        Icons.Default.Place,
-                        contentDescription = "Pin Mapa",
-                        tint = if (activeLayer != null) Color.Red else Color.Gray,
-                        modifier = Modifier.size(40.dp)
-                    )
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Text("📍 Camada Sobreposta: ${activeLayer.name}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0277BD))
+                    Text("Formato: ${activeLayer.fileType} | Centro: ${activeLayer.centerLat}, ${activeLayer.centerLng}", fontSize = 11.sp)
+                    Text("DMS: ${activeLayer.centerPoint.toDmsString()}", fontSize = 10.sp, color = Color.DarkGray)
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    if (activeLayer != null) {
-                        Surface(
-                            color = Color(0xFF004D40),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "SOBREPOSIÇÃO ATIVA: ${activeLayer.name}",
-                                    fontSize = 11.sp,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Formato: ${activeLayer.fileType} | PostGIS SRID 4326",
-                                    fontSize = 10.sp,
-                                    color = Color(0xFF80CBC4)
-                                )
-                            }
-                        }
+                    Button(
+                        onClick = { syncEngine.downloadMapTilesForPdfRegion(minZoom = 12, maxZoom = 14) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("💾 Salvar Tiles OpenStreetMap Offline da Região", fontSize = 11.sp)
+                    }
 
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "📍 Coordenadas: ${activeLayer.centerLat}, ${activeLayer.centerLng}",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isSatelliteMode) Color.White else Color(0xFF006064)
-                        )
-                        Text(
-                            text = "Formato DMS: ${activeLayer.centerPoint.toDmsString()}",
-                            fontSize = 11.sp,
-                            color = if (isSatelliteMode) Color.LightGray else Color.DarkGray
-                        )
-                        Text(
-                            text = "Bounding Box: [${activeLayer.minLat}, ${activeLayer.minLng}] à [${activeLayer.maxLat}, ${activeLayer.maxLng}]",
-                            fontSize = 10.sp,
-                            color = Color.Gray
-                        )
-                    } else {
-                        Text(
-                            "Visualizando Mapa Mundi sem sobreposição.",
-                            fontSize = 13.sp,
-                            color = if (isSatelliteMode) Color.LightGray else Color.DarkGray
-                        )
-                        Text(
-                            "Selecione um mapa na aba 'Importações' para visualizar sua área sobreposta.",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
+                    when (tileState) {
+                        is TileDownloadState.Downloading -> {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(progress = { tileState.percentage / 100f }, modifier = Modifier.fillMaxWidth())
+                            Text("Baixando tiles OSM: ${tileState.current} / ${tileState.total} (${tileState.percentage}%)", fontSize = 10.sp)
+                        }
+                        is TileDownloadState.Completed -> {
+                            Text("✅ ${tileState.totalDownloaded} tiles OpenStreetMap salvos offline.", fontSize = 10.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+                        }
+                        else -> {}
                     }
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Offline Tile Saver
-        if (activeLayer != null) {
-            Button(
-                onClick = { syncEngine.downloadMapTilesForPdfRegion(minZoom = 12, maxZoom = 14) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("💾 Salvar Mapa desta Região Offline", fontSize = 12.sp)
-            }
-
-            when (tileState) {
-                is TileDownloadState.Downloading -> {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    LinearProgressIndicator(progress = { tileState.percentage / 100f }, modifier = Modifier.fillMaxWidth())
-                    Text("Baixando tiles offline: ${tileState.current} / ${tileState.total} (${tileState.percentage}%)", fontSize = 10.sp)
-                }
-                is TileDownloadState.Completed -> {
-                    Text("✅ Tiles de mapa da região salvos no dispositivo (${tileState.totalDownloaded} tiles).", fontSize = 11.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
-                }
-                else -> {}
-            }
-        }
     }
+}
+
+/**
+ * OpenStreetMap Interactive Engine using Leaflet.js inside Android WebView.
+ * Zero API keys required. Supports street tiles, satellite imagery, zoom, gestures,
+ * markers, and bounding box polygon overlays.
+ */
+@Composable
+fun OpenStreetMapWebView(
+    activeLayer: GisLayer?,
+    isSatelliteMode: Boolean
+) {
+    val lat = activeLayer?.centerLat ?: -23.5505
+    val lng = activeLayer?.centerLng ?: -46.6333
+    val minLat = activeLayer?.minLat ?: (lat - 0.02)
+    val minLng = activeLayer?.minLng ?: (lng - 0.02)
+    val maxLat = activeLayer?.maxLat ?: (lat + 0.02)
+    val maxLng = activeLayer?.maxLng ?: (lng + 0.02)
+    val layerName = activeLayer?.name ?: "Mapa Mundi"
+
+    val htmlContent = remember(lat, lng, minLat, minLng, maxLat, maxLng, isSatelliteMode, layerName) {
+        val tileLayerUrl = if (isSatelliteMode) {
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        } else {
+            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        }
+        val attribution = if (isSatelliteMode) "Esri World Imagery" else "&copy; OpenStreetMap contributors"
+
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <style>
+                html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #e5e3df; }
+                .leaflet-popup-content-wrapper { border-radius: 8px; font-family: sans-serif; font-size: 12px; }
+            </style>
+        </head>
+        <body>
+            <div id="map"></div>
+            <script>
+                var map = L.map('map', { zoomControl: true }).setView([$lat, $lng], ${if (activeLayer != null) 14 else 4});
+
+                L.tileLayer('$tileLayerUrl', {
+                    maxZoom: 19,
+                    attribution: '$attribution'
+                }).addTo(map);
+
+                ${if (activeLayer != null) """
+                    // Marker on center
+                    var marker = L.marker([$lat, $lng]).addTo(map);
+                    marker.bindPopup("<b>$layerName</b><br>Lat: $lat, Lng: $lng").openPopup();
+
+                    // Bounding Box Polygon Overlay
+                    var bounds = [[$minLat, $minLng], [$maxLat, $maxLng]];
+                    var rect = L.rectangle(bounds, { color: "#d32f2f", weight: 2, fillColor: "#ff7961", fillOpacity: 0.25 }).addTo(map);
+                    map.fitBounds(bounds, { padding: [20, 20] });
+                """ else ""}
+            </script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                webViewClient = WebViewClient()
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+            }
+        },
+        update = { webView ->
+            webView.loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+        },
+        modifier = Modifier.fillMaxSize()
+    )
 }
 
 // ==========================================
@@ -323,7 +351,6 @@ fun ImportDataTabScreen(
     var newPointLat by remember { mutableStateOf("-23.5505") }
     var newPointLng by remember { mutableStateOf("-46.6333") }
 
-    // Native File Pickers
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -363,7 +390,6 @@ fun ImportDataTabScreen(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // File Pickers Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -396,7 +422,6 @@ fun ImportDataTabScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Manual Point Creator
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text("📍 Criar Ponto de Campo Manualmente", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
@@ -449,7 +474,6 @@ fun ImportDataTabScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // PostGIS Server Connection Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))

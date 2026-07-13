@@ -1,9 +1,10 @@
 import SwiftUI
+import WebKit
 import shared
 
 struct ContentView: View {
     @StateObject private var viewModel = GeoRefViewModel()
-    @State private var selectedTab: Int = 1 // Default: Center Tab (Mapa Mundi)
+    @State private var selectedTab: Int = 1 // Default: Center Tab (Mapa Mundi OSM)
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -14,7 +15,7 @@ struct ContentView: View {
                         .font(.headline)
                         .padding(.horizontal)
 
-                    Text("Toque em qualquer mapa para centralizá-lo e exibi-lo sobreposto no Mapa Mundi.")
+                    Text("Toque em qualquer mapa para centralizá-lo e exibi-lo sobreposto no OpenStreetMap.")
                         .font(.caption)
                         .foregroundColor(.gray)
                         .padding(.horizontal)
@@ -39,7 +40,7 @@ struct ContentView: View {
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 viewModel.selectLayer(layer)
-                                selectedTab = 1 // Switch to World Map tab automatically!
+                                selectedTab = 1
                             }
                         }
                     }
@@ -51,73 +52,66 @@ struct ContentView: View {
             }
             .tag(0)
 
-            // TAB 1 (Centro/Principal): Mapa Mundi Global Interactive View
+            // TAB 1 (Centro/Principal): OpenStreetMap Interactive View
             NavigationView {
-                VStack(spacing: 12) {
-                    Text("🌍 VISUALIZADOR GLOBAL GIS (iOS)")
-                        .font(.caption)
-                        .bold()
-                        .foregroundColor(.blue)
-
-                    ZStack {
-                        Rectangle()
-                            .fill(Color.blue.opacity(0.15))
-                            .cornerRadius(12)
-                        
-                        VStack(spacing: 8) {
-                            Image(systemName: "mappin.and.ellipse")
-                                .font(.largeTitle)
-                                .foregroundColor(viewModel.selectedLayer != nil ? .red : .gray)
-
-                            if let active = viewModel.selectedLayer {
-                                Text("SOBREPOSIÇÃO ATIVA: \(active.name)")
-                                    .font(.subheadline)
-                                    .bold()
-                                    .padding(6)
-                                    .background(Color.green)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(6)
-
-                                Text("📍 Centro: \(active.centerLat), \(active.centerLng)")
-                                    .font(.caption)
-                                    .bold()
-
-                                Text("Formato DMS: \(active.centerPoint.toDmsString())")
-                                    .font(.caption2)
-
-                                Text("BBox: [\(active.minLat), \(active.minLng)] à [\(active.maxLat), \(active.maxLng)]")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-
-                                Button(action: { viewModel.downloadRegionalTiles() }) {
-                                    HStack {
-                                        Image(systemName: "square.and.arrow.down")
-                                        Text("Salvar Tiles da Região Offline")
-                                    }
-                                    .font(.caption)
-                                    .bold()
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Color.blue)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(6)
-                                }
-                            } else {
-                                Text("Nenhum mapa sobreposto selecionado.")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                                Text("Selecione um mapa na aba 'Importações' para posicionar sobreposto.")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
+                VStack(spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("🗺️ Mapa Mundi OpenStreetMap")
+                                .font(.subheadline)
+                                .bold()
+                            Text("Sem Chave de API • Gratuito & Offline Ready")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
-                        .padding()
+                        Spacer()
+                        Button(action: { viewModel.isSatellite.toggle() }) {
+                            Text(viewModel.isSatellite ? "🛰️ Satélite" : "🗺️ Ruas")
+                                .font(.caption)
+                                .padding(6)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(6)
+                        }
                     }
                     .padding(.horizontal)
 
-                    Spacer()
+                    // Interactive OpenStreetMap WKWebView
+                    OSMWebView(
+                        activeLayer: viewModel.selectedLayer,
+                        isSatellite: viewModel.isSatellite
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .cornerRadius(12)
+                    .padding(.horizontal)
+
+                    if let active = viewModel.selectedLayer {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Camada Sobreposta: \(active.name)")
+                                .font(.caption)
+                                .bold()
+                            Text("BBox: [\(active.minLat), \(active.minLng)] à [\(active.maxLat), \(active.maxLng)]")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+
+                            Button(action: { viewModel.downloadRegionalTiles() }) {
+                                HStack {
+                                    Image(systemName: "arrow.down.doc")
+                                    Text("Salvar Tiles OpenStreetMap Offline")
+                                }
+                                .font(.caption)
+                                .bold()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .background(Color.green)
+                                .foregroundColor(.white)
+                                .cornerRadius(6)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
                 }
-                .navigationTitle("Mapa Mundi")
+                .navigationTitle("Mapa Mundi OSM")
             }
             .tabItem {
                 Label("Mapa Mundi", systemImage: "globe")
@@ -180,7 +174,63 @@ struct ContentView: View {
     }
 }
 
+// SwiftUI WKWebView OpenStreetMap Leaflet Engine
+struct OSMWebView: UIViewRepresentable {
+    let activeLayer: GisLayer?
+    let isSatellite: BooleanLiteralType
+
+    func makeUIView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        let lat = activeLayer?.centerLat ?? -23.5505
+        let lng = activeLayer?.centerLng ?? -46.6333
+        val minLat = activeLayer?.minLat ?? (lat - 0.02)
+        val minLng = activeLayer?.minLng ?? (lng - 0.02)
+        val maxLat = activeLayer?.maxLat ?? (lat + 0.02)
+        val maxLng = activeLayer?.maxLng ?? (lng + 0.02)
+        let name = activeLayer?.name ?? "Mapa Mundi"
+
+        let tileUrl = isSatellite ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        let attr = isSatellite ? "Esri World Imagery" : "&copy; OpenStreetMap contributors"
+
+        let hasActive = activeLayer != nil ? "true" : "false"
+
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <style>html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }</style>
+        </head>
+        <body>
+            <div id="map"></div>
+            <script>
+                var map = L.map('map').setView([\(lat), \(lng)], \(hasActive == "true" ? 14 : 4));
+                L.tileLayer('\(tileUrl)', { maxZoom: 19, attribution: '\(attr)' }).addTo(map);
+
+                if (\(hasActive)) {
+                    var marker = L.marker([\(lat), \(lng)]).addTo(map);
+                    marker.bindPopup("<b>\(name)</b>").openPopup();
+                    var bounds = [[\(minLat), \(minLng)], [\(maxLat), \(maxLng)]];
+                    L.rectangle(bounds, { color: "#d32f2f", weight: 2, fillColor: "#ff7961", fillOpacity: 0.25 }).addTo(map);
+                    map.fitBounds(bounds, { padding: [20, 20] });
+                }
+            </script>
+        </body>
+        </html>
+        """
+
+        uiView.loadHTMLString(html, baseURL: URL(string: "https://openstreetmap.org"))
+    }
+}
+
 class GeoRefViewModel: ObservableObject {
+    @Published var isSatellite: Bool = false
     @Published var syncStatusMessage: String = "PostGIS Pronto"
     @Published var selectedLayer: GisLayer? = nil
     @Published var gisLayers: [GisLayer] = []
