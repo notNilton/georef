@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -190,12 +191,12 @@ fun WorldMapOpenStreetMapTabScreen(
         ) {
             Column {
                 Text("🗺️ Mapa Mundi OpenStreetMap", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("Sem Chave de API • Gratuito & Offline Ready", fontSize = 11.sp, color = Color.Gray)
+                Text("Carregamento Rápido • Sem Chave de API", fontSize = 11.sp, color = Color.Gray)
             }
             FilterChip(
                 selected = isSatelliteMode,
                 onClick = { isSatelliteMode = !isSatelliteMode },
-                label = { Text(if (isSatelliteMode) "🛰️ Satélite" else "🗺️ Relação Ruas") }
+                label = { Text(if (isSatelliteMode) "🛰️ Satélite" else "🗺️ Ruas OSM") }
             )
         }
 
@@ -257,8 +258,7 @@ fun WorldMapOpenStreetMapTabScreen(
 
 /**
  * OpenStreetMap Interactive Engine using Leaflet.js inside Android WebView.
- * Zero API keys required. Supports street tiles, satellite imagery, zoom, gestures,
- * markers, and bounding box polygon overlays.
+ * Optimized with custom User-Agent, domStorage, and map.invalidateSize() to prevent grey screen.
  */
 @Composable
 fun OpenStreetMapWebView(
@@ -277,19 +277,20 @@ fun OpenStreetMapWebView(
         val tileLayerUrl = if (isSatelliteMode) {
             "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         } else {
-            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
         }
-        val attribution = if (isSatelliteMode) "Esri World Imagery" else "&copy; OpenStreetMap contributors"
+        val attribution = if (isSatelliteMode) "Esri World Imagery" else "&copy; OpenStreetMap"
 
         """
         <!DOCTYPE html>
         <html>
         <head>
+            <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
-                html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #e5e3df; }
+                html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #aad3df; }
                 .leaflet-popup-content-wrapper { border-radius: 8px; font-family: sans-serif; font-size: 12px; }
             </style>
         </head>
@@ -304,15 +305,18 @@ fun OpenStreetMapWebView(
                 }).addTo(map);
 
                 ${if (activeLayer != null) """
-                    // Marker on center
                     var marker = L.marker([$lat, $lng]).addTo(map);
                     marker.bindPopup("<b>$layerName</b><br>Lat: $lat, Lng: $lng").openPopup();
 
-                    // Bounding Box Polygon Overlay
                     var bounds = [[$minLat, $minLng], [$maxLat, $maxLng]];
-                    var rect = L.rectangle(bounds, { color: "#d32f2f", weight: 2, fillColor: "#ff7961", fillOpacity: 0.25 }).addTo(map);
-                    map.fitBounds(bounds, { padding: [20, 20] });
+                    L.rectangle(bounds, { color: "#d32f2f", weight: 3, fillColor: "#ff7961", fillOpacity: 0.3 }).addTo(map);
+                    map.fitBounds(bounds, { padding: [30, 30] });
                 """ else ""}
+
+                // Force Leaflet map resize calculation to prevent grey background
+                setTimeout(function() {
+                    map.invalidateSize();
+                }, 300);
             </script>
         </body>
         </html>
@@ -322,9 +326,17 @@ fun OpenStreetMapWebView(
     AndroidView(
         factory = { context ->
             WebView(context).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
+                webViewClient = object : WebViewClient() {}
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    allowFileAccess = true
+                    allowContentAccess = true
+                    loadWithOverviewMode = true
+                    useWideViewPort = true
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 GeoRef/1.0"
+                }
                 loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
             }
         },
