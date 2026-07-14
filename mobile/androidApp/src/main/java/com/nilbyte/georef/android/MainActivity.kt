@@ -301,8 +301,8 @@ fun NativeOsmMapView(
                 // Bounding Box Polygon Overlay
                 val polygon = OsmPolygon(mapView)
                 polygon.fillPaint.color = android.graphics.Color.parseColor("#40D32F2F")
-                polygon.strokePaint.color = android.graphics.Color.parseColor("#D32F2F")
-                polygon.strokeWidth = 5f
+                polygon.outlinePaint.color = android.graphics.Color.parseColor("#D32F2F")
+                polygon.outlinePaint.strokeWidth = 5f
                 val pts = listOf(
                     OsmGeoPoint(minLat, minLng),
                     OsmGeoPoint(maxLat, minLng),
