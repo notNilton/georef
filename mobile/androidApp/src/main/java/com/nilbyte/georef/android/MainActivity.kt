@@ -4,9 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -39,6 +36,12 @@ import com.nilbyte.georef.domain.model.GisLayer
 import com.nilbyte.georef.sync.IdempotentSyncEngine
 import com.nilbyte.georef.sync.SyncState
 import kotlinx.coroutines.launch
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint as OsmGeoPoint
+import org.osmdroid.views.MapView as OsmMapView
+import org.osmdroid.views.overlay.Marker as OsmMarker
+import org.osmdroid.views.overlay.Polygon as OsmPolygon
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -49,6 +52,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize OSMDroid Configuration
+        Configuration.getInstance().load(applicationContext, applicationContext.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
+        Configuration.getInstance().userAgentValue = packageName
 
         setContent {
             MaterialTheme {
@@ -76,7 +83,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("GeoRef - OpenStreetMap & GIS", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+                title = { Text("GeoRef - OpenStreetMap Nativo", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -94,7 +101,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     selected = selectedTabIndex == 1,
                     onClick = { selectedTabIndex = 1 },
                     icon = { Icon(Icons.Default.LocationOn, contentDescription = "Mapa Mundi") },
-                    label = { Text("🌍 Mapa Mundi OSM", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                    label = { Text("🌍 Mapa Mundi", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                 )
                 NavigationBarItem(
                     selected = selectedTabIndex == 2,
@@ -173,7 +180,7 @@ fun ImportsTabScreen(
 }
 
 // ==========================================
-// ABA 2 (CENTRO/PRINCIPAL): Mapa Mundi OpenStreetMap Interativo
+// ABA 2 (CENTRO/PRINCIPAL): Mapa Mundi OpenStreetMap Nativo
 // ==========================================
 @Composable
 fun WorldMapOpenStreetMapTabScreen(
@@ -190,19 +197,19 @@ fun WorldMapOpenStreetMapTabScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("🗺️ Mapa Mundi OpenStreetMap", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("Carregamento Rápido • Sem Chave de API", fontSize = 11.sp, color = Color.Gray)
+                Text("🗺️ Mapa Mundi OpenStreetMap Nativo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Renderização Nativa Android • Sem Chave de API", fontSize = 11.sp, color = Color.Gray)
             }
             FilterChip(
                 selected = isSatelliteMode,
                 onClick = { isSatelliteMode = !isSatelliteMode },
-                label = { Text(if (isSatelliteMode) "🛰️ Satélite" else "🗺️ Ruas OSM") }
+                label = { Text(if (isSatelliteMode) "🛰️ USGS Satélite" else "🗺️ Ruas OSM") }
             )
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // OpenStreetMap Interactive Leaflet Viewer
+        // OpenStreetMap Native Android View (OSMDroid)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -210,7 +217,7 @@ fun WorldMapOpenStreetMapTabScreen(
                 .clip(RoundedCornerShape(12.dp))
                 .border(1.5.dp, Color(0xFF0288D1), RoundedCornerShape(12.dp))
         ) {
-            OpenStreetMapWebView(
+            NativeOsmMapView(
                 activeLayer = activeLayer,
                 isSatelliteMode = isSatelliteMode
             )
@@ -257,11 +264,11 @@ fun WorldMapOpenStreetMapTabScreen(
 }
 
 /**
- * OpenStreetMap Interactive Engine using Leaflet.js inside Android WebView.
- * Optimized with custom User-Agent, domStorage, and map.invalidateSize() to prevent grey screen.
+ * 100% Native OpenStreetMap Engine using OSMDroid (org.osmdroid.views.MapView).
+ * No WebViews, no JavaScript, no CDN issues, no black screens!
  */
 @Composable
-fun OpenStreetMapWebView(
+fun NativeOsmMapView(
     activeLayer: GisLayer?,
     isSatelliteMode: Boolean
 ) {
@@ -273,75 +280,48 @@ fun OpenStreetMapWebView(
     val maxLng = activeLayer?.maxLng ?: (lng + 0.02)
     val layerName = activeLayer?.name ?: "Mapa Mundi"
 
-    val htmlContent = remember(lat, lng, minLat, minLng, maxLat, maxLng, isSatelliteMode, layerName) {
-        val tileLayerUrl = if (isSatelliteMode) {
-            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        } else {
-            "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        }
-        val attribution = if (isSatelliteMode) "Esri World Imagery" else "&copy; OpenStreetMap"
-
-        """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-            <style>
-                html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #aad3df; }
-                .leaflet-popup-content-wrapper { border-radius: 8px; font-family: sans-serif; font-size: 12px; }
-            </style>
-        </head>
-        <body>
-            <div id="map"></div>
-            <script>
-                var map = L.map('map', { zoomControl: true }).setView([$lat, $lng], ${if (activeLayer != null) 14 else 4});
-
-                L.tileLayer('$tileLayerUrl', {
-                    maxZoom: 19,
-                    attribution: '$attribution'
-                }).addTo(map);
-
-                ${if (activeLayer != null) """
-                    var marker = L.marker([$lat, $lng]).addTo(map);
-                    marker.bindPopup("<b>$layerName</b><br>Lat: $lat, Lng: $lng").openPopup();
-
-                    var bounds = [[$minLat, $minLng], [$maxLat, $maxLng]];
-                    L.rectangle(bounds, { color: "#d32f2f", weight: 3, fillColor: "#ff7961", fillOpacity: 0.3 }).addTo(map);
-                    map.fitBounds(bounds, { padding: [30, 30] });
-                """ else ""}
-
-                // Force Leaflet map resize calculation to prevent grey background
-                setTimeout(function() {
-                    map.invalidateSize();
-                }, 300);
-            </script>
-        </body>
-        </html>
-        """.trimIndent()
-    }
-
     AndroidView(
         factory = { context ->
-            WebView(context).apply {
-                webViewClient = object : WebViewClient() {}
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    allowFileAccess = true
-                    allowContentAccess = true
-                    loadWithOverviewMode = true
-                    useWideViewPort = true
-                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 GeoRef/1.0"
-                }
-                loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+            OsmMapView(context).apply {
+                setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
+                setMultiTouchControls(true)
+                controller.setZoom(if (activeLayer != null) 14.0 else 4.0)
+                controller.setCenter(OsmGeoPoint(lat, lng))
             }
         },
-        update = { webView ->
-            webView.loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+        update = { mapView ->
+            mapView.setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
+            mapView.overlays.clear()
+
+            val centerPt = OsmGeoPoint(lat, lng)
+            mapView.controller.setCenter(centerPt)
+            mapView.controller.setZoom(if (activeLayer != null) 14.0 else 4.0)
+
+            if (activeLayer != null) {
+                // Bounding Box Polygon Overlay
+                val polygon = OsmPolygon(mapView)
+                polygon.fillPaint.color = android.graphics.Color.parseColor("#40D32F2F")
+                polygon.strokePaint.color = android.graphics.Color.parseColor("#D32F2F")
+                polygon.strokeWidth = 5f
+                val pts = listOf(
+                    OsmGeoPoint(minLat, minLng),
+                    OsmGeoPoint(maxLat, minLng),
+                    OsmGeoPoint(maxLat, maxLng),
+                    OsmGeoPoint(minLat, maxLng)
+                )
+                polygon.setPoints(pts)
+                mapView.overlays.add(polygon)
+
+                // Center Pin Marker
+                val marker = OsmMarker(mapView)
+                marker.position = centerPt
+                marker.title = layerName
+                marker.snippet = "Lat: $lat, Lng: $lng"
+                marker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
+                mapView.overlays.add(marker)
+            }
+
+            mapView.invalidate()
         },
         modifier = Modifier.fillMaxSize()
     )
