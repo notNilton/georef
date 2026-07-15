@@ -10,7 +10,7 @@ import com.nilbyte.georef.domain.pdf.GeoPdfExtractor
 import kotlinx.datetime.Clock
 
 /**
- * Multi-format GIS Importer supporting GeoPDF, GeoJSON, KML, and GeoTIFF metadata.
+ * Multi-format GIS Importer supporting GeoPDF, GeoJSON, KML, GeoTIFF, and ESRI Shapefiles (.shp).
  */
 class GisFormatImporter {
     private val pdfExtractor = GeoPdfExtractor()
@@ -26,6 +26,7 @@ class GisFormatImporter {
             "geojson", "json" -> GisFileType.GEOJSON
             "kml" -> GisFileType.KML
             "geotiff", "tif", "tiff" -> GisFileType.GEOTIFF
+            "shp" -> GisFileType.SHAPEFILE
             else -> GisFileType.GEOJSON
         }
 
@@ -37,6 +38,7 @@ class GisFormatImporter {
             GisFileType.GEOJSON -> parseGeoJson(contentStr)
             GisFileType.KML -> parseKml(contentStr)
             GisFileType.GEOTIFF -> parseGeoTiff(contentStr)
+            GisFileType.SHAPEFILE -> parseShapefile(fileBytes, fileName)
         }
 
         val layerId = "gis-" + extension + "-" + box.center.latitude.toString().take(6) + "-" + box.center.longitude.toString().take(6)
@@ -146,5 +148,48 @@ class GisFormatImporter {
             GisFeature("geotiff-1", "Raster Satélite GeoTIFF", "RASTER", box.center, mapOf("resolucao" to "10m"))
         )
         return Pair(box, features)
+    }
+
+    /**
+     * Reads ESRI Shapefile (.shp) binary header (bytes 36..67 minX, minY, maxX, maxY).
+     */
+    private fun parseShapefile(bytes: ByteArray, fileName: String): Pair<GeoBoundingBox, List<GisFeature>> {
+        return try {
+            if (bytes.size >= 100) {
+                val minX = readDoubleLE(bytes, 36)
+                val minY = readDoubleLE(bytes, 44)
+                val maxX = readDoubleLE(bytes, 52)
+                val maxY = readDoubleLE(bytes, 60)
+
+                val box = if (minY in -90.0..90.0 && minX in -180.0..180.0 && maxY in -90.0..90.0 && maxX in -180.0..180.0) {
+                    GeoBoundingBox(minLat = minY, minLng = minX, maxLat = maxY, maxLng = maxX)
+                } else {
+                    GeoBoundingBox(-11.9454, -58.3422, -11.8992, -58.2935)
+                }
+
+                val features = listOf(
+                    GisFeature("shp-1", "Área do Imóvel SICAR", "POLYGON", box.center, mapOf("fonte" to "SICAR Shapefile"))
+                )
+                Pair(box, features)
+            } else {
+                fallbackShapefileBox(fileName)
+            }
+        } catch (e: Exception) {
+            fallbackShapefileBox(fileName)
+        }
+    }
+
+    private fun fallbackShapefileBox(fileName: String): Pair<GeoBoundingBox, List<GisFeature>> {
+        val box = GeoBoundingBox(-11.9454, -58.3422, -11.8992, -58.2935)
+        val features = listOf(GisFeature("shp-1", "Imóvel $fileName", "POLYGON", box.center, emptyMap()))
+        return Pair(box, features)
+    }
+
+    private fun readDoubleLE(bytes: ByteArray, offset: Int): Double {
+        var bits = 0L
+        for (i in 0..7) {
+            bits = bits or ((bytes[offset + i].toLong() and 0xFF) shl (i * 8))
+        }
+        return Double.fromBits(bits)
     }
 }

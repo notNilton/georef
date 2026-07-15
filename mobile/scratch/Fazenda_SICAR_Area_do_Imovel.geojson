@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "name": "Fazenda SICAR Real - Area do Imovel",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Imovel Rural SICAR MT",
+        "car": "MT-5101902-7B6B2149EF1949518276A00C3E6109A0",
+        "municipio": "Brasnorte - MT"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -58.3422076,
+              -11.9454077
+            ],
+            [
+              -58.2935308,
+              -11.9454077
+            ],
+            [
+              -58.2935308,
+              -11.8992459
+            ],
+            [
+              -58.3422076,
+              -11.8992459
+            ],
+            [
+              -58.3422076,
+              -11.9454077
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

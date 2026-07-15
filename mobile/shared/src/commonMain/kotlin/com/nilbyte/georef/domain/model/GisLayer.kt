@@ -7,7 +7,8 @@ enum class GisFileType {
     GEOPDF,
     GEOJSON,
     KML,
-    GEOTIFF
+    GEOTIFF,
+    SHAPEFILE
 }
 
 @Serializable

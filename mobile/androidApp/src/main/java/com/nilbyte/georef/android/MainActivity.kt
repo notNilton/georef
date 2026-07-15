@@ -613,6 +613,7 @@ fun FileTypeBadge(type: GisFileType) {
         GisFileType.GEOJSON -> "GEOJSON"
         GisFileType.KML -> "KML"
         GisFileType.GEOTIFF -> "GEOTIFF"
+        GisFileType.SHAPEFILE -> "SHAPEFILE"
     }
 
     Surface(
