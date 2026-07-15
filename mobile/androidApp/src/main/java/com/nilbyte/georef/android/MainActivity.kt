@@ -2,6 +2,7 @@ package com.nilbyte.georef.android
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
@@ -11,9 +12,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -57,15 +60,27 @@ class MainActivity : ComponentActivity() {
         Configuration.getInstance().userAgentValue = packageName
 
         setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
+            val context = LocalContext.current
+            val isDark = isSystemInDarkTheme()
+
+            // System Dynamic Material You Color Scheme
+            val colorScheme = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                    if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+                }
+                isDark -> darkColorScheme(
                     primary = Color(0xFF00E676),
-                    secondary = Color(0xFF29B6F6),
-                    background = Color(0xFF121212),
                     surface = Color(0xFF1E1E1E),
-                    surfaceVariant = Color(0xFF252525)
+                    background = Color(0xFF121212)
                 )
-            ) {
+                else -> lightColorScheme(
+                    primary = Color(0xFF00897B),
+                    surface = Color(0xFFF5F5F5),
+                    background = Color(0xFFFFFFFF)
+                )
+            }
+
+            MaterialTheme(colorScheme = colorScheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -77,7 +92,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     var selectedTabIndex by remember { mutableIntStateOf(1) }
@@ -87,35 +101,54 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     val syncState by syncEngine.syncState.collectAsState()
     val tileState by syncEngine.offlineMapTileStore.downloadState.collectAsState()
 
+    // Immersive Fullscreen Edge-to-Edge Scaffold without Top Header
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("GeoRef", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1E1E1E)
-                )
-            )
-        },
         bottomBar = {
-            NavigationBar(containerColor = Color(0xFF1E1E1E)) {
-                NavigationBarItem(
-                    selected = selectedTabIndex == 0,
-                    onClick = { selectedTabIndex = 0 },
-                    icon = { Icon(Icons.Default.List, contentDescription = null, tint = if (selectedTabIndex == 0) Color(0xFF00E676) else Color.Gray) },
-                    label = { Text("Camadas", fontSize = 11.sp, color = if (selectedTabIndex == 0) Color.White else Color.Gray) }
-                )
-                NavigationBarItem(
-                    selected = selectedTabIndex == 1,
-                    onClick = { selectedTabIndex = 1 },
-                    icon = { Icon(Icons.Default.LocationOn, contentDescription = null, tint = if (selectedTabIndex == 1) Color(0xFF00E676) else Color.Gray) },
-                    label = { Text("Mapa", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (selectedTabIndex == 1) Color.White else Color.Gray) }
-                )
-                NavigationBarItem(
-                    selected = selectedTabIndex == 2,
-                    onClick = { selectedTabIndex = 2 },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null, tint = if (selectedTabIndex == 2) Color(0xFF00E676) else Color.Gray) },
-                    label = { Text("Importar", fontSize = 11.sp, color = if (selectedTabIndex == 2) Color.White else Color.Gray) }
-                )
+            // Floating Translucent Navigation Bar Pill
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.clip(CircleShape)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { selectedTabIndex = 0 }) {
+                            Icon(
+                                Icons.Default.List,
+                                contentDescription = null,
+                                tint = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else Color.Gray
+                            )
+                        }
+
+                        IconButton(onClick = { selectedTabIndex = 1 }) {
+                            Icon(
+                                Icons.Default.LocationOn,
+                                contentDescription = null,
+                                tint = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else Color.Gray
+                            )
+                        }
+
+                        IconButton(onClick = { selectedTabIndex = 2 }) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                tint = if (selectedTabIndex == 2) MaterialTheme.colorScheme.primary else Color.Gray
+                            )
+                        }
+                    }
+                }
             }
         }
     ) { padding ->
@@ -156,17 +189,17 @@ fun ImportsTabScreen(
     activeLayer: GisLayer?,
     onSelectLayer: (GisLayer) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Camadas Salvas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+    Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(20.dp)) {
+        Text("Camadas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (gisLayers.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Nenhuma camada importada.", fontSize = 13.sp, color = Color.Gray)
+                Text("Nenhuma camada salva", fontSize = 14.sp, color = Color.Gray)
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(gisLayers) { layer ->
                     GisLayerCard(
                         layer = layer,
@@ -187,67 +220,90 @@ fun WorldMapOpenStreetMapTabScreen(
 ) {
     var isSatelliteMode by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Fullscreen Native OpenStreetMap Engine
+        NativeOsmMapView(
+            activeLayer = activeLayer,
+            isSatelliteMode = isSatelliteMode
+        )
+
+        // Floating Minimal Map Overlay Header
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Visualizador GIS", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color.White)
-            FilterChip(
-                selected = isSatelliteMode,
-                onClick = { isSatelliteMode = !isSatelliteMode },
-                label = { Text(if (isSatelliteMode) "Satélite" else "Vetor", fontSize = 11.sp) }
-            )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(RoundedCornerShape(8.dp))
-                .border(1.dp, Color(0xFF333333), RoundedCornerShape(8.dp))
-        ) {
-            NativeOsmMapView(
-                activeLayer = activeLayer,
-                isSatelliteMode = isSatelliteMode
-            )
-        }
-
-        if (activeLayer != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                shadowElevation = 4.dp
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(activeLayer.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        FileTypeBadge(activeLayer.fileType)
-                    }
-                    Text("Lat: ${activeLayer.centerLat} | Lng: ${activeLayer.centerLng}", fontSize = 11.sp, color = Color.Gray)
+                Text(
+                    text = activeLayer?.name ?: "GeoRef",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                shadowElevation = 4.dp,
+                modifier = Modifier.clickable { isSatelliteMode = !isSatelliteMode }
+            ) {
+                Text(
+                    text = if (isSatelliteMode) "Satélite" else "Vetor",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
 
-                    Button(
-                        onClick = { syncEngine.downloadMapTilesForPdfRegion(minZoom = 12, maxZoom = 14) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Baixar Tiles Offline", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
-                    }
-
-                    when (tileState) {
-                        is TileDownloadState.Downloading -> {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            LinearProgressIndicator(progress = { tileState.percentage / 100f }, modifier = Modifier.fillMaxWidth(), color = Color(0xFF00E676))
+        // Floating Layer Metadata & Offline Downloader
+        if (activeLayer != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 80.dp, start = 16.dp, end = 16.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    shadowElevation = 6.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(activeLayer.name, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            FileTypeBadge(activeLayer.fileType)
                         }
-                        is TileDownloadState.Completed -> {
-                            Text("Tiles salvos (${tileState.totalDownloaded}).", fontSize = 10.sp, color = Color(0xFF00E676))
+                        Text("${activeLayer.centerLat}, ${activeLayer.centerLng}", fontSize = 11.sp, color = Color.Gray)
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Button(
+                            onClick = { syncEngine.downloadMapTilesForPdfRegion(minZoom = 12, maxZoom = 14) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Salvar Offline", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
-                        else -> {}
+
+                        when (tileState) {
+                            is TileDownloadState.Downloading -> {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                LinearProgressIndicator(progress = { tileState.percentage / 100f }, modifier = Modifier.fillMaxWidth())
+                            }
+                            is TileDownloadState.Completed -> {
+                                Text("Tiles salvos (${tileState.totalDownloaded})", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                            }
+                            else -> {}
+                        }
                     }
                 }
             }
@@ -358,51 +414,54 @@ fun ImportDataTabScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .statusBarsPadding()
+            .padding(20.dp)
     ) {
-        Text("Importar Dados", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+        Text("Importar", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text("Seletor de Arquivos", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Arquivos", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Button(
                     onClick = { pdfPickerLauncher.launch("application/pdf") },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF252525)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("GeoPDF (.pdf)", color = Color.White)
+                    Text("GeoPDF (.pdf)")
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                Button(
+                OutlinedButton(
                     onClick = { genericGisPickerLauncher.launch("*/*") },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF252525)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("GeoJSON / KML / GeoTIFF", color = Color.White)
+                    Text("GeoJSON / KML / GeoTIFF")
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text("Ponto Manual", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 OutlinedTextField(
                     value = newPointName,
@@ -425,7 +484,7 @@ fun ImportDataTabScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Button(
                     onClick = {
@@ -443,29 +502,30 @@ fun ImportDataTabScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Salvar Ponto", color = Color.Black, fontWeight = FontWeight.Bold)
+                    Text("Salvar Ponto")
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(14.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("PostGIS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("PostGIS", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(
                         text = when (syncState) {
                             is SyncState.Idle -> "Pronto"
@@ -478,12 +538,11 @@ fun ImportDataTabScreen(
                     )
                 }
 
-                Button(
+                TextButton(
                     onClick = { syncEngine.syncNow("batch-" + UUID.randomUUID().toString().take(8)) },
-                    enabled = syncState !is SyncState.Syncing,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF252525))
+                    enabled = syncState !is SyncState.Syncing
                 ) {
-                    Text("Sincronizar", fontSize = 11.sp, color = Color.White)
+                    Text("Sincronizar", fontSize = 11.sp)
                 }
             }
         }
@@ -518,26 +577,26 @@ fun GisLayerCard(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    Card(
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = if (isSelected) 6.dp else 1.dp,
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .border(
-                width = if (isSelected) 1.dp else 0.dp,
-                color = if (isSelected) Color(0xFF00E676) else Color.Transparent,
-                shape = CardDefaults.shape
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E1E)
-        )
+                width = if (isSelected) 1.5.dp else 0.dp,
+                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = RoundedCornerShape(12.dp)
+            )
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = layer.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(text = layer.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 FileTypeBadge(layer.fileType)
             }
 
@@ -556,12 +615,15 @@ fun FileTypeBadge(type: GisFileType) {
         GisFileType.GEOTIFF -> "GEOTIFF"
     }
 
-    Surface(color = Color(0xFF252525), shape = RoundedCornerShape(4.dp)) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(6.dp)
+    ) {
         Text(
             text = label,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             fontSize = 9.sp,
-            color = Color.LightGray,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.Bold
         )
     }
