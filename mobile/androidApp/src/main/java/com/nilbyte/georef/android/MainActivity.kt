@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
@@ -92,9 +93,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
-    var selectedTabIndex by remember { mutableIntStateOf(1) } // 0: Camadas, 1: Mapa, 2: Importar Geometria
+    var selectedScreen by remember { mutableIntStateOf(1) } // 0: Lista de Camadas, 1: Mapa Global
+    var showRegisteredLayerPickerSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -102,34 +105,18 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     val gisLayers by syncEngine.gisLayersFlow.collectAsState()
     val activeGisLayers by syncEngine.activeGisLayers.collectAsState()
     val syncState by syncEngine.syncState.collectAsState()
-    val tileState by syncEngine.offlineMapTileStore.downloadState.collectAsState()
 
-    // Native File Pickers for adding geometry directly
-    val pdfPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            scope.launch {
-                val bytes = readBytesFromUri(context, it)
-                val fileName = getFileNameFromUri(context, it) ?: "Mapa.pdf"
-                if (bytes != null && bytes.isNotEmpty()) {
-                    syncEngine.processGeoPdfFile(bytes, fileName)
-                    selectedTabIndex = 1 // Auto-switch to Map
-                }
-            }
-        }
-    }
-
+    // Launcher for importing NEW layer files into catalog
     val genericGisPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
             scope.launch {
                 val bytes = readBytesFromUri(context, it)
-                val fileName = getFileNameFromUri(context, it) ?: "Dados.geojson"
+                val fileName = getFileNameFromUri(context, it) ?: "Camada.geojson"
                 if (bytes != null && bytes.isNotEmpty()) {
                     syncEngine.importGisDocument(bytes, fileName)
-                    selectedTabIndex = 1 // Auto-switch to Map
+                    selectedScreen = 1 // Switch to map view after importing
                 }
             }
         }
@@ -137,6 +124,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 
     Scaffold(
         bottomBar = {
+            // Floating 3-Button Navigation Bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -152,21 +140,21 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Esquerda: Lista de Camadas
-                        IconButton(onClick = { selectedTabIndex = 0 }) {
+                        // 1. Botão da Esquerda: Lista de Camadas
+                        IconButton(onClick = { selectedScreen = 0 }) {
                             Icon(
                                 Icons.Default.List,
                                 contentDescription = null,
-                                tint = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else Color.Gray
+                                tint = if (selectedScreen == 0) MaterialTheme.colorScheme.primary else Color.Gray
                             )
                         }
 
-                        // Centro: Botão de Mais (+) -> Adicionar Geometria ao Mapa
+                        // 2. Botão Central (+): Adicionar Camadas ao Mapa (Das Camadas Já Cadastradas)
                         IconButton(onClick = {
-                            genericGisPickerLauncher.launch("*/*")
+                            showRegisteredLayerPickerSheet = true
                         }) {
                             Surface(
                                 shape = CircleShape,
@@ -183,12 +171,12 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                             }
                         }
 
-                        // Direita: Mapa
-                        IconButton(onClick = { selectedTabIndex = 1 }) {
+                        // 3. Botão da Direita: Mapa Global
+                        IconButton(onClick = { selectedScreen = 1 }) {
                             Icon(
                                 Icons.Default.LocationOn,
                                 contentDescription = null,
-                                tint = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else Color.Gray
+                                tint = if (selectedScreen == 1) MaterialTheme.colorScheme.primary else Color.Gray
                             )
                         }
                     }
@@ -201,49 +189,124 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 .padding(padding)
                 .fillMaxSize()
         ) {
-            when (selectedTabIndex) {
-                0 -> ImportsTabScreen(
+            when (selectedScreen) {
+                0 -> RegisteredLayersListScreen(
                     gisLayers = gisLayers,
                     activeLayers = activeGisLayers,
                     onToggleActive = { id -> syncEngine.toggleLayerActive(id) },
                     onRemoveLayer = { id -> syncEngine.removeLayer(id) },
-                    onAddLayersClick = {
+                    onImportNewLayerClick = {
                         genericGisPickerLauncher.launch("*/*")
                     },
                     onSelectLayer = { _ ->
-                        selectedTabIndex = 1
+                        selectedScreen = 1
                     }
                 )
-                1 -> WorldMapOpenStreetMapTabScreen(
+                1 -> WorldMapScreen(
                     activeLayers = activeGisLayers,
-                    syncEngine = syncEngine,
-                    tileState = tileState
-                )
-                2 -> ImportDataTabScreen(
-                    syncEngine = syncEngine,
-                    syncState = syncState,
-                    pdfPickerLauncher = pdfPickerLauncher,
-                    genericGisPickerLauncher = genericGisPickerLauncher,
-                    onImportSuccess = {
-                        selectedTabIndex = 1
+                    onOpenLayerToggleList = {
+                        showRegisteredLayerPickerSheet = true
                     }
                 )
+            }
+
+            // BottomSheet with Toggle list of Registered Layers (Triggered by Center + or Top Chip)
+            if (showRegisteredLayerPickerSheet) {
+                ModalBottomSheet(
+                    onDismissRequest = { showRegisteredLayerPickerSheet = false }
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Camadas Cadastradas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            IconButton(onClick = { showRegisteredLayerPickerSheet = false }) {
+                                Icon(Icons.Default.Close, contentDescription = null)
+                            }
+                        }
+
+                        Text("Selecione quais camadas deseja sobrepor no mapa:", fontSize = 12.sp, color = Color.Gray)
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        if (gisLayers.isEmpty()) {
+                            Text("Nenhuma camada cadastrada. Vá até a lista para importar.", fontSize = 13.sp, color = Color.Gray)
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.heightIn(max = 320.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(gisLayers) { layer ->
+                                    val isOverlayOn = activeGisLayers.any { it.id == layer.id }
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                syncEngine.toggleLayerActive(layer.id)
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(14.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(layer.name, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                    FileTypeBadge(layer.fileType)
+                                                }
+                                                Text("Lat: ${layer.centerLat}, Lng: ${layer.centerLng}", fontSize = 10.sp, color = Color.Gray)
+                                            }
+
+                                            Switch(
+                                                checked = isOverlayOn,
+                                                onCheckedChange = { syncEngine.toggleLayerActive(layer.id) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        OutlinedButton(
+                            onClick = {
+                                showRegisteredLayerPickerSheet = false
+                                genericGisPickerLauncher.launch("*/*")
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Importar Novo Arquivo (+)")
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun ImportsTabScreen(
+fun RegisteredLayersListScreen(
     gisLayers: List<GisLayer>,
     activeLayers: List<GisLayer>,
     onToggleActive: (String) -> Unit,
     onRemoveLayer: (String) -> Unit,
-    onAddLayersClick: () -> Unit,
+    onImportNewLayerClick: () -> Unit,
     onSelectLayer: (GisLayer) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(20.dp)) {
-        // Top Header with "Adicionar Camadas" Button
+        // Top Header with "Adicionar Camadas" button to import new files into catalog
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -252,7 +315,7 @@ fun ImportsTabScreen(
             Text("Camadas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
             Button(
-                onClick = onAddLayersClick,
+                onClick = onImportNewLayerClick,
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Text("Adicionar Camadas", fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold)
@@ -263,7 +326,7 @@ fun ImportsTabScreen(
 
         if (gisLayers.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Nenhuma camada salva", fontSize = 14.sp, color = Color.Gray)
+                Text("Nenhuma camada cadastrada", fontSize = 14.sp, color = Color.Gray)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -283,21 +346,20 @@ fun ImportsTabScreen(
 }
 
 @Composable
-fun WorldMapOpenStreetMapTabScreen(
+fun WorldMapScreen(
     activeLayers: List<GisLayer>,
-    syncEngine: IdempotentSyncEngine,
-    tileState: TileDownloadState
+    onOpenLayerToggleList: () -> Unit
 ) {
     var isSatelliteMode by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Fullscreen Native Multi-Layer Map Engine (No FAB)
+        // Fullscreen Native Multi-Layer Map Engine
         NativeOsmMapView(
             activeLayers = activeLayers,
             isSatelliteMode = isSatelliteMode
         )
 
-        // Floating Top Header Controls
+        // Floating Top Header Controls (Interactive Layer Count Chip)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -306,22 +368,30 @@ fun WorldMapOpenStreetMapTabScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Interactive Top Chip: Click to open layer toggle list!
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                shadowElevation = 4.dp
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                shadowElevation = 4.dp,
+                modifier = Modifier.clickable { onOpenLayerToggleList() }
             ) {
-                Text(
-                    text = if (activeLayers.isNotEmpty()) "${activeLayers.size} Camadas" else "GeoRef",
+                Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = if (activeLayers.isNotEmpty()) "${activeLayers.size} Camadas" else "GeoRef (0 Camadas)",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text("▼", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                }
             }
 
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
                 shadowElevation = 4.dp,
                 modifier = Modifier.clickable { isSatelliteMode = !isSatelliteMode }
             ) {
@@ -398,158 +468,6 @@ fun NativeOsmMapView(
         },
         modifier = Modifier.fillMaxSize()
     )
-}
-
-@Composable
-fun ImportDataTabScreen(
-    syncEngine: IdempotentSyncEngine,
-    syncState: SyncState,
-    pdfPickerLauncher: androidx.activity.result.ActivityResultLauncher<String>,
-    genericGisPickerLauncher: androidx.activity.result.ActivityResultLauncher<String>,
-    onImportSuccess: () -> Unit
-) {
-    val scope = rememberCoroutineScope()
-
-    var newPointName by remember { mutableStateOf("") }
-    var newPointLat by remember { mutableStateOf("-23.5505") }
-    var newPointLng by remember { mutableStateOf("-46.6333") }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(20.dp)
-    ) {
-        Text("Importar", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Arquivos", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Button(
-                    onClick = { pdfPickerLauncher.launch("application/pdf") },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("GeoPDF (.pdf)")
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedButton(
-                    onClick = { genericGisPickerLauncher.launch("*/*") },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("GeoJSON / KML / SHP / GeoTIFF")
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Ponto Manual", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                OutlinedTextField(
-                    value = newPointName,
-                    onValueChange = { newPointName = it },
-                    label = { Text("Nome") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = newPointLat,
-                        onValueChange = { newPointLat = it },
-                        label = { Text("Latitude") },
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = newPointLng,
-                        onValueChange = { newPointLng = it },
-                        label = { Text("Longitude") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Button(
-                    onClick = {
-                        if (newPointName.isNotBlank()) {
-                            scope.launch {
-                                syncEngine.createFieldRecord(
-                                    id = UUID.randomUUID().toString(),
-                                    name = newPointName,
-                                    description = "Ponto manual",
-                                    latitude = newPointLat.toDoubleOrNull() ?: -23.5505,
-                                    longitude = newPointLng.toDoubleOrNull() ?: -46.6333
-                                )
-                                newPointName = ""
-                                onImportSuccess()
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Salvar Ponto")
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("PostGIS", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        text = when (syncState) {
-                            is SyncState.Idle -> "Pronto"
-                            is SyncState.Syncing -> "Sincronizando"
-                            is SyncState.Success -> "Sincronizado"
-                            is SyncState.OfflineError -> "Offline"
-                        },
-                        fontSize = 11.sp,
-                        color = Color.Gray
-                    )
-                }
-
-                TextButton(
-                    onClick = { syncEngine.syncNow("batch-" + UUID.randomUUID().toString().take(8)) },
-                    enabled = syncState !is SyncState.Syncing
-                ) {
-                    Text("Sincronizar", fontSize = 11.sp)
-                }
-            }
-        }
-    }
 }
 
 private fun readBytesFromUri(context: Context, uri: Uri): ByteArray? {
