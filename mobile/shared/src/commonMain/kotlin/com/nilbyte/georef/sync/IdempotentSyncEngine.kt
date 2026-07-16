@@ -52,43 +52,45 @@ class IdempotentSyncEngine(
 
     val recordsFlow: StateFlow<List<GeorefRecord>> = localDatabase.recordsFlow
     val gisLayersFlow: StateFlow<List<GisLayer>> = gisLocalDatabase.gisLayersFlow
-    val selectedGisLayer: StateFlow<GisLayer?> = gisLocalDatabase.selectedGisLayer
+    val activeGisLayers: StateFlow<List<GisLayer>> = gisLocalDatabase.activeGisLayers
 
     /**
-     * Import GIS file (GeoPDF, GeoJSON, KML, GeoTIFF), saving it locally offline
-     * and setting it as the active overlay layer on the global GIS map.
+     * Import GIS file (GeoPDF, GeoJSON, KML, GeoTIFF, Shapefile), saving it locally offline
+     * and auto-enabling it on the active multi-layer overlay stack.
      */
     suspend fun importGisDocument(fileBytes: ByteArray, fileName: String): GisLayer {
         val gisLayer = gisImporter.importGisDocument(fileBytes, fileName, clientId)
         gisLocalDatabase.saveOrUpdateLayer(gisLayer, isPendingSync = true)
-        gisLocalDatabase.selectLayer(gisLayer)
 
-        // Also create a local field record marker at the center of the imported map
         createFieldRecord(
             id = "rec-" + gisLayer.id,
-            name = "Camada GIS: $fileName",
-            description = "Formato: ${gisLayer.fileType} | BBox: [${gisLayer.minLat}, ${gisLayer.minLng}] a [${gisLayer.maxLat}, ${gisLayer.maxLng}]",
+            name = "Camada: $fileName",
+            description = "Formato: ${gisLayer.fileType}",
             latitude = gisLayer.centerLat,
-            longitude = gisLayer.centerLng,
-            elevation = 0.0,
-            accuracy = 1.0
+            longitude = gisLayer.centerLng
         )
 
         return gisLayer
     }
 
     /**
-     * Set a saved GIS layer as active overlay on the global interactive map.
+     * Toggle layer visibility on the active map overlay stack.
      */
-    fun selectGisLayerForMapOverlay(layer: GisLayer?) {
+    fun toggleLayerActive(id: String) {
         syncScope.launch {
-            gisLocalDatabase.selectLayer(layer)
+            gisLocalDatabase.toggleLayerActive(id)
         }
     }
 
     /**
-     * Process an incoming PDF file, extracting embedded GeoPDF metadata (/GPTS, /BBox).
+     * Remove a layer from database.
      */
+    fun removeLayer(id: String) {
+        syncScope.launch {
+            gisLocalDatabase.removeLayer(id)
+        }
+    }
+
     suspend fun processGeoPdfFile(pdfBytes: ByteArray, fileName: String): GeoPdfMetadata {
         val metadata = pdfExtractor.extractGeoMetadata(pdfBytes, fileName)
         _selectedGeoPdf.value = metadata
@@ -96,13 +98,10 @@ class IdempotentSyncEngine(
         return metadata
     }
 
-    /**
-     * Triggers offline tile download for the entire regional bounding box of the active PDF/GIS layer.
-     */
     fun downloadMapTilesForPdfRegion(minZoom: Int = 12, maxZoom: Int = 15) {
-        val activeGis = selectedGisLayer.value
-        val box = activeGis?.boundingBox ?: _selectedGeoPdf.value?.boundingBox ?: return
-        val name = activeGis?.name ?: _selectedGeoPdf.value?.fileName ?: "Região GIS"
+        val firstActive = activeGisLayers.value.firstOrNull()
+        val box = firstActive?.boundingBox ?: _selectedGeoPdf.value?.boundingBox ?: return
+        val name = firstActive?.name ?: "Região"
 
         offlineMapTileStore.downloadMapTilesForRegion(
             boundingBox = box,
@@ -112,9 +111,6 @@ class IdempotentSyncEngine(
         )
     }
 
-    /**
-     * Field operation: Create record locally when offline.
-     */
     suspend fun createFieldRecord(
         id: String,
         name: String,
@@ -144,9 +140,6 @@ class IdempotentSyncEngine(
         return record
     }
 
-    /**
-     * Asynchronously triggers idempotent network synchronization cycle for records and PostGIS layers.
-     */
     fun syncNow(batchId: String) {
         syncScope.launch {
             performSync(batchId)
@@ -170,12 +163,11 @@ class IdempotentSyncEngine(
                 }
             }
 
-            val state = SyncState.Success(0, "Local store & PostGIS up to date")
+            val state = SyncState.Success(0, "PostGIS atualizado")
             _syncState.value = state
             return state
         }
 
-        // Push pending GIS layers to PostGIS
         if (pendingGisLayers.isNotEmpty()) {
             val gisReq = GisSyncPushRequest(
                 batchId = "gis-$batchId",
@@ -192,7 +184,7 @@ class IdempotentSyncEngine(
         }
 
         if (pendingRecords.isEmpty()) {
-            val successState = SyncState.Success(pendingGisLayers.size, "Synced ${pendingGisLayers.size} GIS layers to PostGIS")
+            val successState = SyncState.Success(pendingGisLayers.size, "Sincronizado")
             _syncState.value = successState
             return successState
         }
@@ -230,14 +222,14 @@ class IdempotentSyncEngine(
 
                 val successState = SyncState.Success(
                     itemsSyncedCount = response.processedCount,
-                    message = "Successfully synced ${response.processedCount} records & PostGIS GIS layers"
+                    message = "Sincronizado"
                 )
                 _syncState.value = successState
                 successState
             },
             onFailure = { error ->
                 val errorState = SyncState.OfflineError(
-                    reason = error.message ?: "Network unreachable. Saved in local outbox."
+                    reason = error.message ?: "Offline"
                 )
                 _syncState.value = errorState
                 errorState

@@ -20,6 +20,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
@@ -63,7 +66,6 @@ class MainActivity : ComponentActivity() {
             val context = LocalContext.current
             val isDark = isSystemInDarkTheme()
 
-            // System Dynamic Material You Color Scheme
             val colorScheme = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
                     if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
@@ -92,19 +94,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     var selectedTabIndex by remember { mutableIntStateOf(1) }
+    var showFabMenuSheet by remember { mutableStateOf(false) }
 
     val gisLayers by syncEngine.gisLayersFlow.collectAsState()
-    val activeGisLayer by syncEngine.selectedGisLayer.collectAsState()
+    val activeGisLayers by syncEngine.activeGisLayers.collectAsState()
     val syncState by syncEngine.syncState.collectAsState()
     val tileState by syncEngine.offlineMapTileStore.downloadState.collectAsState()
 
-    // Immersive Fullscreen Edge-to-Edge Scaffold without Top Header
     Scaffold(
         bottomBar = {
-            // Floating Translucent Navigation Bar Pill
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -119,8 +121,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     modifier = Modifier.clip(CircleShape)
                 ) {
                     Row(
-                        modifier = Modifier
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -160,16 +161,18 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
             when (selectedTabIndex) {
                 0 -> ImportsTabScreen(
                     gisLayers = gisLayers,
-                    activeLayer = activeGisLayer,
-                    onSelectLayer = { layer ->
-                        syncEngine.selectGisLayerForMapOverlay(layer)
+                    activeLayers = activeGisLayers,
+                    onToggleActive = { id -> syncEngine.toggleLayerActive(id) },
+                    onRemoveLayer = { id -> syncEngine.removeLayer(id) },
+                    onSelectLayer = { _ ->
                         selectedTabIndex = 1
                     }
                 )
                 1 -> WorldMapOpenStreetMapTabScreen(
-                    activeLayer = activeGisLayer,
+                    activeLayers = activeGisLayers,
                     syncEngine = syncEngine,
-                    tileState = tileState
+                    tileState = tileState,
+                    onOpenFabMenu = { showFabMenuSheet = true }
                 )
                 2 -> ImportDataTabScreen(
                     syncEngine = syncEngine,
@@ -179,6 +182,73 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     }
                 )
             }
+
+            // Layer Management Bottom Sheet opened by FAB (+)
+            if (showFabMenuSheet) {
+                ModalBottomSheet(
+                    onDismissRequest = { showFabMenuSheet = false }
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Gerenciar Camadas Sobrepostas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            IconButton(onClick = { showFabMenuSheet = false }) {
+                                Icon(Icons.Default.Close, contentDescription = null)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (gisLayers.isEmpty()) {
+                            Text("Nenhum mapa cadastrado.", fontSize = 13.sp, color = Color.Gray)
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.heightIn(max = 300.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(gisLayers) { layer ->
+                                    val isOverlayOn = activeGisLayers.any { it.id == layer.id }
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(layer.name, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                Text("${layer.fileType} | Lat: ${layer.centerLat}", fontSize = 10.sp, color = Color.Gray)
+                                            }
+
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Switch(
+                                                    checked = isOverlayOn,
+                                                    onCheckedChange = { syncEngine.toggleLayerActive(layer.id) }
+                                                )
+                                                IconButton(onClick = { syncEngine.removeLayer(layer.id) }) {
+                                                    Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red, modifier = Modifier.size(20.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -186,7 +256,9 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 @Composable
 fun ImportsTabScreen(
     gisLayers: List<GisLayer>,
-    activeLayer: GisLayer?,
+    activeLayers: List<GisLayer>,
+    onToggleActive: (String) -> Unit,
+    onRemoveLayer: (String) -> Unit,
     onSelectLayer: (GisLayer) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(20.dp)) {
@@ -201,9 +273,12 @@ fun ImportsTabScreen(
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(gisLayers) { layer ->
-                    GisLayerCard(
+                    val isOverlayOn = activeLayers.any { it.id == layer.id }
+                    GisLayerItemCard(
                         layer = layer,
-                        isSelected = activeLayer?.id == layer.id,
+                        isOverlayOn = isOverlayOn,
+                        onToggle = { onToggleActive(layer.id) },
+                        onRemove = { onRemoveLayer(layer.id) },
                         onClick = { onSelectLayer(layer) }
                     )
                 }
@@ -214,20 +289,21 @@ fun ImportsTabScreen(
 
 @Composable
 fun WorldMapOpenStreetMapTabScreen(
-    activeLayer: GisLayer?,
+    activeLayers: List<GisLayer>,
     syncEngine: IdempotentSyncEngine,
-    tileState: TileDownloadState
+    tileState: TileDownloadState,
+    onOpenFabMenu: () -> Unit
 ) {
     var isSatelliteMode by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Fullscreen Native OpenStreetMap Engine
+        // Fullscreen Native Multi-Layer Map Engine
         NativeOsmMapView(
-            activeLayer = activeLayer,
+            activeLayers = activeLayers,
             isSatelliteMode = isSatelliteMode
         )
 
-        // Floating Minimal Map Overlay Header
+        // Floating Top Header Controls
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -242,7 +318,7 @@ fun WorldMapOpenStreetMapTabScreen(
                 shadowElevation = 4.dp
             ) {
                 Text(
-                    text = activeLayer?.name ?: "GeoRef",
+                    text = if (activeLayers.isNotEmpty()) "${activeLayers.size} Camadas Sobrepostas" else "GeoRef",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
@@ -265,101 +341,81 @@ fun WorldMapOpenStreetMapTabScreen(
             }
         }
 
-        // Floating Layer Metadata & Offline Downloader
-        if (activeLayer != null) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 80.dp, start = 16.dp, end = 16.dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                    shadowElevation = 6.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(activeLayer.name, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            FileTypeBadge(activeLayer.fileType)
-                        }
-                        Text("${activeLayer.centerLat}, ${activeLayer.centerLng}", fontSize = 11.sp, color = Color.Gray)
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Button(
-                            onClick = { syncEngine.downloadMapTilesForPdfRegion(minZoom = 12, maxZoom = 14) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Salvar Offline", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        when (tileState) {
-                            is TileDownloadState.Downloading -> {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                LinearProgressIndicator(progress = { tileState.percentage / 100f }, modifier = Modifier.fillMaxWidth())
-                            }
-                            is TileDownloadState.Completed -> {
-                                Text("Tiles salvos (${tileState.totalDownloaded})", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                            }
-                            else -> {}
-                        }
-                    }
-                }
-            }
+        // Floating Action Button (FAB +) to manage stacked overlays
+        FloatingActionButton(
+            onClick = onOpenFabMenu,
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = Color.Black,
+            shape = CircleShape,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 90.dp, end = 20.dp)
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null)
         }
     }
 }
 
+/**
+ * 100% Native OpenStreetMap Engine supporting MULTIPLE STACKED VECTOR LAYERS.
+ * Iterates through all enabled active layers and draws every polygon bounding box & pin!
+ */
 @Composable
 fun NativeOsmMapView(
-    activeLayer: GisLayer?,
+    activeLayers: List<GisLayer>,
     isSatelliteMode: Boolean
 ) {
-    val lat = activeLayer?.centerLat ?: -23.5505
-    val lng = activeLayer?.centerLng ?: -46.6333
-    val minLat = activeLayer?.minLat ?: (lat - 0.02)
-    val minLng = activeLayer?.minLng ?: (lng - 0.02)
-    val maxLat = activeLayer?.maxLat ?: (lat + 0.02)
-    val maxLng = activeLayer?.maxLng ?: (lng + 0.02)
-    val layerName = activeLayer?.name ?: "Mapa"
+    val defaultLat = -23.5505
+    val defaultLng = -46.6333
+
+    val targetLat = activeLayers.firstOrNull()?.centerLat ?: defaultLat
+    val targetLng = activeLayers.firstOrNull()?.centerLng ?: defaultLng
+
+    val strokeColors = listOf("#00E676", "#29B6F6", "#FF9100", "#E040FB", "#FFD600")
+    val fillColors = listOf("#3000E676", "#3029B6F6", "#30FF9100", "#30E040FB", "#30FFD600")
 
     AndroidView(
         factory = { context ->
             OsmMapView(context).apply {
                 setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true)
-                controller.setZoom(if (activeLayer != null) 14.0 else 4.0)
-                controller.setCenter(OsmGeoPoint(lat, lng))
+                controller.setZoom(if (activeLayers.isNotEmpty()) 14.0 else 4.0)
+                controller.setCenter(OsmGeoPoint(targetLat, targetLng))
             }
         },
         update = { mapView ->
             mapView.setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
             mapView.overlays.clear()
 
-            val centerPt = OsmGeoPoint(lat, lng)
-            mapView.controller.setCenter(centerPt)
-            mapView.controller.setZoom(if (activeLayer != null) 14.0 else 4.0)
+            if (activeLayers.isNotEmpty()) {
+                mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
 
-            if (activeLayer != null) {
-                val polygon = OsmPolygon(mapView)
-                polygon.fillPaint.color = android.graphics.Color.parseColor("#3000E676")
-                polygon.outlinePaint.color = android.graphics.Color.parseColor("#00E676")
-                polygon.outlinePaint.strokeWidth = 4f
-                val pts = listOf(
-                    OsmGeoPoint(minLat, minLng),
-                    OsmGeoPoint(maxLat, minLng),
-                    OsmGeoPoint(maxLat, maxLng),
-                    OsmGeoPoint(minLat, maxLng)
-                )
-                polygon.setPoints(pts)
-                mapView.overlays.add(polygon)
+                // Render ALL active stacked layers simultaneously!
+                activeLayers.forEachIndexed { index, layer ->
+                    val colorIdx = index % strokeColors.size
+                    val sColor = strokeColors[colorIdx]
+                    val fColor = fillColors[colorIdx]
 
-                val marker = OsmMarker(mapView)
-                marker.position = centerPt
-                marker.title = layerName
-                marker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
-                mapView.overlays.add(marker)
+                    val polygon = OsmPolygon(mapView)
+                    polygon.fillPaint.color = android.graphics.Color.parseColor(fColor)
+                    polygon.outlinePaint.color = android.graphics.Color.parseColor(sColor)
+                    polygon.outlinePaint.strokeWidth = 5f
+
+                    val pts = listOf(
+                        OsmGeoPoint(layer.minLat, layer.minLng),
+                        OsmGeoPoint(layer.maxLat, layer.minLng),
+                        OsmGeoPoint(layer.maxLat, layer.maxLng),
+                        OsmGeoPoint(layer.minLat, layer.maxLng)
+                    )
+                    polygon.setPoints(pts)
+                    mapView.overlays.add(polygon)
+
+                    val marker = OsmMarker(mapView)
+                    marker.position = OsmGeoPoint(layer.centerLat, layer.centerLng)
+                    marker.title = layer.name
+                    marker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
+                    mapView.overlays.add(marker)
+                }
             }
 
             mapView.invalidate()
@@ -445,7 +501,7 @@ fun ImportDataTabScreen(
                     onClick = { genericGisPickerLauncher.launch("*/*") },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("GeoJSON / KML / GeoTIFF")
+                    Text("GeoJSON / KML / SHP / GeoTIFF")
                 }
             }
         }
@@ -572,36 +628,51 @@ private fun getFileNameFromUri(context: Context, uri: Uri): String? {
 }
 
 @Composable
-fun GisLayerCard(
+fun GisLayerItemCard(
     layer: GisLayer,
-    isSelected: Boolean,
+    isOverlayOn: Boolean,
+    onToggle: () -> Unit,
+    onRemove: () -> Unit,
     onClick: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = if (isSelected) 6.dp else 1.dp,
+        tonalElevation = if (isOverlayOn) 6.dp else 1.dp,
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .border(
-                width = if (isSelected) 1.5.dp else 0.dp,
-                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                width = if (isOverlayOn) 1.5.dp else 0.dp,
+                color = if (isOverlayOn) MaterialTheme.colorScheme.primary else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(text = layer.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                FileTypeBadge(layer.fileType)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = layer.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    FileTypeBadge(layer.fileType)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("${layer.centerLat}, ${layer.centerLng}", fontSize = 11.sp, color = Color.Gray)
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
-            Text("${layer.centerLat}, ${layer.centerLng}", fontSize = 11.sp, color = Color.Gray)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = isOverlayOn,
+                    onCheckedChange = { onToggle() }
+                )
+                IconButton(onClick = onRemove) {
+                    Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red, modifier = Modifier.size(20.dp))
+                }
+            }
         }
     }
 }

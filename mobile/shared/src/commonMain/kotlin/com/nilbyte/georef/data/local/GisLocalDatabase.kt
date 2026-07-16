@@ -12,12 +12,13 @@ class GisLocalDatabase {
     private val mutex = Mutex()
     private val layersMap = mutableMapOf<String, GisLayer>()
     private val outboxQueue = mutableSetOf<String>()
+    private val activeLayerIds = mutableSetOf<String>()
 
     private val _gisLayersFlow = MutableStateFlow<List<GisLayer>>(emptyList())
     val gisLayersFlow: StateFlow<List<GisLayer>> = _gisLayersFlow.asStateFlow()
 
-    private val _selectedGisLayer = MutableStateFlow<GisLayer?>(null)
-    val selectedGisLayer: StateFlow<GisLayer?> = _selectedGisLayer.asStateFlow()
+    private val _activeGisLayers = MutableStateFlow<List<GisLayer>>(emptyList())
+    val activeGisLayers: StateFlow<List<GisLayer>> = _activeGisLayers.asStateFlow()
 
     suspend fun saveOrUpdateLayer(layer: GisLayer, isPendingSync: Boolean = true) = mutex.withLock {
         val updatedLayer = if (isPendingSync && layer.syncStatus == SyncStatus.SYNCED) {
@@ -32,6 +33,24 @@ class GisLocalDatabase {
         } else {
             outboxQueue.remove(layer.id)
         }
+        // Auto-enable newly imported layer on the map stack
+        activeLayerIds.add(layer.id)
+        publishUpdates()
+    }
+
+    suspend fun toggleLayerActive(id: String) = mutex.withLock {
+        if (activeLayerIds.contains(id)) {
+            activeLayerIds.remove(id)
+        } else {
+            activeLayerIds.add(id)
+        }
+        publishUpdates()
+    }
+
+    suspend fun removeLayer(id: String) = mutex.withLock {
+        layersMap.remove(id)
+        activeLayerIds.remove(id)
+        outboxQueue.remove(id)
         publishUpdates()
     }
 
@@ -47,10 +66,6 @@ class GisLocalDatabase {
         publishUpdates()
     }
 
-    suspend fun selectLayer(layer: GisLayer?) = mutex.withLock {
-        _selectedGisLayer.value = layer
-    }
-
     suspend fun getPendingOutbox(): List<GisLayer> = mutex.withLock {
         outboxQueue.mapNotNull { id -> layersMap[id] }
     }
@@ -60,6 +75,8 @@ class GisLocalDatabase {
     }
 
     private fun publishUpdates() {
-        _gisLayersFlow.value = layersMap.values.filter { !it.isDeleted }.sortedByDescending { it.clientUpdatedAt }
+        val all = layersMap.values.filter { !it.isDeleted }.sortedByDescending { it.clientUpdatedAt }
+        _gisLayersFlow.value = all
+        _activeGisLayers.value = all.filter { activeLayerIds.contains(it.id) }
     }
 }
