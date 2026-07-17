@@ -35,11 +35,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.nilbyte.georef.data.local.TileDownloadState
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
 import com.nilbyte.georef.sync.IdempotentSyncEngine
-import com.nilbyte.georef.sync.SyncState
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -104,7 +102,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 
     val gisLayers by syncEngine.gisLayersFlow.collectAsState()
     val activeGisLayers by syncEngine.activeGisLayers.collectAsState()
-    val syncState by syncEngine.syncState.collectAsState()
 
     // Launcher for importing NEW layer files into catalog
     val genericGisPickerLauncher = rememberLauncherForActivityResult(
@@ -124,11 +121,12 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 
     Scaffold(
         bottomBar = {
-            // Floating 3-Button Navigation Bar
+            // Floating 3-Button Navigation Bar with Safe Window Insets (navigationBarsPadding)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 14.dp),
+                    .navigationBarsPadding() // Dynamically respects Android transparent navigation bar / gesture handle!
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
@@ -210,14 +208,16 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 )
             }
 
-            // BottomSheet with Toggle list of Registered Layers (Triggered by Center + or Top Chip)
+            // Responsive BottomSheet respecting transparent system navigation bars & back gesture handles
             if (showRegisteredLayerPickerSheet) {
                 ModalBottomSheet(
-                    onDismissRequest = { showRegisteredLayerPickerSheet = false }
+                    onDismissRequest = { showRegisteredLayerPickerSheet = false },
+                    windowInsets = WindowInsets.navigationBars // Protects bottom sheet content from transparent navbar overlaps
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .navigationBarsPadding() // Ensures safe bottom padding above system gesture bar
                             .padding(20.dp)
                     ) {
                         Row(
@@ -305,7 +305,13 @@ fun RegisteredLayersListScreen(
     onImportNewLayerClick: () -> Unit,
     onSelectLayer: (GisLayer) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(20.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(20.dp)
+    ) {
         // Top Header with "Adicionar Camadas" button to import new files into catalog
         Row(
             modifier = Modifier.fillMaxWidth(),
