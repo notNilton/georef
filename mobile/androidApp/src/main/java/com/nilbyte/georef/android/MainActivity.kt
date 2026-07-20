@@ -1,6 +1,8 @@
 package com.nilbyte.georef.android
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
 import com.nilbyte.georef.sync.IdempotentSyncEngine
@@ -45,6 +48,8 @@ import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView as OsmMapView
 import org.osmdroid.views.overlay.Marker as OsmMarker
 import org.osmdroid.views.overlay.Polygon as OsmPolygon
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -103,6 +108,22 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     val gisLayers by syncEngine.gisLayersFlow.collectAsState()
     val activeGisLayers by syncEngine.activeGisLayers.collectAsState()
 
+    // Request Location Permissions launcher
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ -> }
+
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
     // Launcher for importing NEW layer files into catalog
     val genericGisPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -113,7 +134,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 val fileName = getFileNameFromUri(context, it) ?: "Camada.geojson"
                 if (bytes != null && bytes.isNotEmpty()) {
                     syncEngine.importGisDocument(bytes, fileName)
-                    // Stay on current layers list screen
                 }
             }
         }
@@ -121,11 +141,11 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 
     Scaffold(
         bottomBar = {
-            // Floating 3-Button Navigation Bar with Safe Window Insets (navigationBarsPadding)
+            // Floating 3-Button Navigation Bar with Safe Window Insets
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding() // Dynamically respects Android transparent navigation bar / gesture handle!
+                    .navigationBarsPadding()
                     .padding(horizontal = 24.dp, vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -204,20 +224,28 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     activeLayers = activeGisLayers,
                     onOpenLayerToggleList = {
                         showRegisteredLayerPickerSheet = true
+                    },
+                    onRequestLocationPermission = {
+                        locationPermissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION
+                            )
+                        )
                     }
                 )
             }
 
-            // Responsive BottomSheet respecting transparent system navigation bars & back gesture handles
+            // BottomSheet with Toggle list of Registered Layers
             if (showRegisteredLayerPickerSheet) {
                 ModalBottomSheet(
                     onDismissRequest = { showRegisteredLayerPickerSheet = false },
-                    windowInsets = WindowInsets.navigationBars // Protects bottom sheet content from transparent navbar overlaps
+                    windowInsets = WindowInsets.navigationBars
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .navigationBarsPadding() // Ensures safe bottom padding above system gesture bar
+                            .navigationBarsPadding()
                             .padding(20.dp)
                     ) {
                         Row(
@@ -312,7 +340,6 @@ fun RegisteredLayersListScreen(
             .navigationBarsPadding()
             .padding(20.dp)
     ) {
-        // Top Header with "Adicionar Camadas" button to import new files into catalog
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -354,27 +381,30 @@ fun RegisteredLayersListScreen(
 @Composable
 fun WorldMapScreen(
     activeLayers: List<GisLayer>,
-    onOpenLayerToggleList: () -> Unit
+    onOpenLayerToggleList: () -> Unit,
+    onRequestLocationPermission: () -> Unit
 ) {
     var isSatelliteMode by remember { mutableStateOf(false) }
+    var triggerFocusLocationSignal by remember { mutableLongStateOf(0L) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Fullscreen Native Multi-Layer Map Engine
+        // Fullscreen Native Multi-Layer Map Engine with Real-Time GPS User Location Overlay
         NativeOsmMapView(
             activeLayers = activeLayers,
-            isSatelliteMode = isSatelliteMode
+            isSatelliteMode = isSatelliteMode,
+            triggerFocusLocationSignal = triggerFocusLocationSignal
         )
 
-        // Floating Top Header Controls (Interactive Layer Count Chip)
+        // Floating Top Left Header: Active Layers Chip
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Top
         ) {
-            // Interactive Top Chip: Click to open layer toggle list!
+            // Left: Interactive Layer Count Chip
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
@@ -395,19 +425,55 @@ fun WorldMapScreen(
                 }
             }
 
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                shadowElevation = 4.dp,
-                modifier = Modifier.clickable { isSatelliteMode = !isSatelliteMode }
+            // Right Column: 1. Vetor/Satélite Toggle + 2. Focar na Minha Localização (Directly below 'Vetor')
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = if (isSatelliteMode) "Satélite" else "Vetor",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                // Button 1: Vetor / Satélite
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.clickable { isSatelliteMode = !isSatelliteMode }
+                ) {
+                    Text(
+                        text = if (isSatelliteMode) "Satélite" else "Vetor",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                // Button 2: Focar na Minha Localização (Located directly below 'Vetor')
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.clickable {
+                        onRequestLocationPermission()
+                        triggerFocusLocationSignal = System.currentTimeMillis()
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.LocationOn,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Focar Minha Localização",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     }
@@ -416,8 +482,11 @@ fun WorldMapScreen(
 @Composable
 fun NativeOsmMapView(
     activeLayers: List<GisLayer>,
-    isSatelliteMode: Boolean
+    isSatelliteMode: Boolean,
+    triggerFocusLocationSignal: Long
 ) {
+    val context = LocalContext.current
+
     val defaultLat = -23.5505
     val defaultLng = -46.6333
 
@@ -427,47 +496,80 @@ fun NativeOsmMapView(
     val strokeColors = listOf("#00E676", "#29B6F6", "#FF9100", "#E040FB", "#FFD600")
     val fillColors = listOf("#3000E676", "#3029B6F6", "#30FF9100", "#30E040FB", "#30FFD600")
 
+    val locationOverlayState = remember { mutableStateOf<MyLocationNewOverlay?>(null) }
+
     AndroidView(
-        factory = { context ->
-            OsmMapView(context).apply {
+        factory = { ctx ->
+            OsmMapView(ctx).apply {
                 setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true)
                 controller.setZoom(if (activeLayers.isNotEmpty()) 14.0 else 4.0)
                 controller.setCenter(OsmGeoPoint(targetLat, targetLng))
+
+                // Real-time GPS Location Overlay
+                val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(ctx), this)
+                locationOverlay.enableMyLocation()
+                overlays.add(locationOverlay)
+                locationOverlayState.value = locationOverlay
             }
         },
         update = { mapView ->
             mapView.setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
+
+            // Preserve location overlay while updating vector polygons
+            val locationOverlay = locationOverlayState.value ?: MyLocationNewOverlay(GpsMyLocationProvider(context), mapView).also {
+                it.enableMyLocation()
+                locationOverlayState.value = it
+            }
+
             mapView.overlays.clear()
+            mapView.overlays.add(locationOverlay)
 
-            if (activeLayers.isNotEmpty()) {
-                mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
-
-                activeLayers.forEachIndexed { index, layer ->
-                    val colorIdx = index % strokeColors.size
-                    val sColor = strokeColors[colorIdx]
-                    val fColor = fillColors[colorIdx]
-
-                    val polygon = OsmPolygon(mapView)
-                    polygon.fillPaint.color = android.graphics.Color.parseColor(fColor)
-                    polygon.outlinePaint.color = android.graphics.Color.parseColor(sColor)
-                    polygon.outlinePaint.strokeWidth = 5f
-
-                    val pts = listOf(
-                        OsmGeoPoint(layer.minLat, layer.minLng),
-                        OsmGeoPoint(layer.maxLat, layer.minLng),
-                        OsmGeoPoint(layer.maxLat, layer.maxLng),
-                        OsmGeoPoint(layer.minLat, layer.maxLng)
-                    )
-                    polygon.setPoints(pts)
-                    mapView.overlays.add(polygon)
-
-                    val marker = OsmMarker(mapView)
-                    marker.position = OsmGeoPoint(layer.centerLat, layer.centerLng)
-                    marker.title = layer.name
-                    marker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
-                    mapView.overlays.add(marker)
+            // Handle "Focar na minha localização" signal
+            if (triggerFocusLocationSignal > 0L) {
+                locationOverlay.myLocation?.let { myPt ->
+                    mapView.controller.animateTo(myPt)
+                    mapView.controller.setZoom(17.0)
+                } ?: run {
+                    locationOverlay.enableMyLocation()
+                    locationOverlay.runOnFirstFix {
+                        locationOverlay.myLocation?.let { fixPt ->
+                            mapView.post {
+                                mapView.controller.animateTo(fixPt)
+                                mapView.controller.setZoom(17.0)
+                            }
+                        }
+                    }
                 }
+            } else if (activeLayers.isNotEmpty()) {
+                mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
+            }
+
+            // Render active stacked layers
+            activeLayers.forEachIndexed { index, layer ->
+                val colorIdx = index % strokeColors.size
+                val sColor = strokeColors[colorIdx]
+                val fColor = fillColors[colorIdx]
+
+                val polygon = OsmPolygon(mapView)
+                polygon.fillPaint.color = android.graphics.Color.parseColor(fColor)
+                polygon.outlinePaint.color = android.graphics.Color.parseColor(sColor)
+                polygon.outlinePaint.strokeWidth = 5f
+
+                val pts = listOf(
+                    OsmGeoPoint(layer.minLat, layer.minLng),
+                    OsmGeoPoint(layer.maxLat, layer.minLng),
+                    OsmGeoPoint(layer.maxLat, layer.maxLng),
+                    OsmGeoPoint(layer.minLat, layer.maxLng)
+                )
+                polygon.setPoints(pts)
+                mapView.overlays.add(polygon)
+
+                val marker = OsmMarker(mapView)
+                marker.position = OsmGeoPoint(layer.centerLat, layer.centerLng)
+                marker.title = layer.name
+                marker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
+                mapView.overlays.add(marker)
             }
 
             mapView.invalidate()
