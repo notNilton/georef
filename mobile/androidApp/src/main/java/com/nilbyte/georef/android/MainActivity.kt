@@ -113,7 +113,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 val fileName = getFileNameFromUri(context, it) ?: "Camada.geojson"
                 if (bytes != null && bytes.isNotEmpty()) {
                     syncEngine.importGisDocument(bytes, fileName)
-                    selectedScreen = 1 // Switch to map view after importing
+                    // Stay on current layers list screen
                 }
             }
         }
