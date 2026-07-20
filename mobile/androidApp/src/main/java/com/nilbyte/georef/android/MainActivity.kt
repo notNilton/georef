@@ -446,31 +446,24 @@ fun WorldMapScreen(
                     )
                 }
 
-                // Button 2: Focar na Minha Localização (Located directly below 'Vetor')
+                // Button 2: Minimalist Circular GPS Location Icon Button (Located directly below 'Vetor')
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
                     shadowElevation = 4.dp,
-                    modifier = Modifier.clickable {
-                        onRequestLocationPermission()
-                        triggerFocusLocationSignal = System.currentTimeMillis()
-                    }
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clickable {
+                            onRequestLocationPermission()
+                            triggerFocusLocationSignal = System.currentTimeMillis()
+                        }
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    Box(contentAlignment = Alignment.Center) {
                         Icon(
                             Icons.Default.LocationOn,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "Focar Minha Localização",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
