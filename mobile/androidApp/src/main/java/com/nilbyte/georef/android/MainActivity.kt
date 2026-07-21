@@ -2,11 +2,13 @@ package com.nilbyte.georef.android
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -43,6 +45,9 @@ import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
 import com.nilbyte.georef.sync.IdempotentSyncEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
@@ -69,6 +74,8 @@ class MainActivity : ComponentActivity() {
 
         Configuration.getInstance().load(applicationContext, applicationContext.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
         Configuration.getInstance().userAgentValue = packageName
+
+        handleIncomingFileIntent(intent)
 
         setContent {
             val context = LocalContext.current
@@ -100,6 +107,33 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncomingFileIntent(intent)
+    }
+
+    private fun handleIncomingFileIntent(intent: Intent?) {
+        val uri: Uri? = intent?.data ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent?.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+
+        if (uri != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                val bytes = readBytesFromUri(applicationContext, uri)
+                val fileName = getFileNameFromUri(applicationContext, uri) ?: "Camada_Importada.shp"
+                if (bytes != null && bytes.isNotEmpty()) {
+                    syncEngine.importGisDocument(bytes, fileName)
+                    runOnUiThread {
+                        Toast.makeText(applicationContext, "Camada $fileName salva com sucesso!", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -115,7 +149,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     val activeGisLayers by syncEngine.activeGisLayers.collectAsState()
     val customPins by syncEngine.recordsFlow.collectAsState()
 
-    // Request Location Permissions launcher
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { _ -> }
@@ -131,7 +164,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
         }
     }
 
-    // Launcher for importing NEW layer files into catalog
     val genericGisPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -394,14 +426,12 @@ fun WorldMapScreen(
     var isSatelliteMode by remember { mutableStateOf(false) }
     var triggerFocusLocationSignal by remember { mutableLongStateOf(0L) }
 
-    // Pin Editor Dialog State
     var editingPinRecord by remember { mutableStateOf<GeorefRecord?>(null) }
     var pinNameInput by remember { mutableStateOf("") }
     var pinLatInput by remember { mutableStateOf("") }
     var pinLngInput by remember { mutableStateOf("") }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Fullscreen Native Multi-Layer Map Engine with Long-Press Pin Creation
         NativeOsmMapView(
             activeLayers = activeLayers,
             customPins = customPins,
@@ -436,7 +466,6 @@ fun WorldMapScreen(
             }
         )
 
-        // Floating Top Left Header: Active Layers Chip
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -507,7 +536,6 @@ fun WorldMapScreen(
             }
         }
 
-        // Edit Pin Coordinate Dialog
         editingPinRecord?.let { pin ->
             AlertDialog(
                 onDismissRequest = { editingPinRecord = null },
@@ -596,7 +624,6 @@ fun NativeOsmMapView(
                 controller.setZoom(if (activeLayers.isNotEmpty()) 14.0 else 4.0)
                 controller.setCenter(OsmGeoPoint(targetLat, targetLng))
 
-                // 1. Long-press Touch Event Receiver to drop pins on long press
                 val eventsReceiver = object : MapEventsReceiver {
                     override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean = false
                     override fun longPressHelper(p: OsmGeoPoint?): Boolean {
@@ -608,14 +635,12 @@ fun NativeOsmMapView(
                 }
                 overlays.add(MapEventsOverlay(eventsReceiver))
 
-                // 2. Two-finger touch gesture rotation overlay
                 val rotationGestureOverlay = RotationGestureOverlay(this).apply {
                     isEnabled = true
                 }
                 overlays.add(rotationGestureOverlay)
                 rotationOverlayState.value = rotationGestureOverlay
 
-                // 3. Real-time GPS Location Overlay
                 val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(ctx), this)
                 locationOverlay.enableMyLocation()
                 overlays.add(locationOverlay)
@@ -635,7 +660,6 @@ fun NativeOsmMapView(
                 locationOverlayState.value = it
             }
 
-            // Clear overlays while maintaining touch receivers & GPS location
             mapView.overlays.clear()
             val eventsReceiver = object : MapEventsReceiver {
                 override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean = false
@@ -650,7 +674,6 @@ fun NativeOsmMapView(
             mapView.overlays.add(rotationOverlay)
             mapView.overlays.add(locationOverlay)
 
-            // Handle "Focar na minha localização" signal
             if (triggerFocusLocationSignal > 0L) {
                 locationOverlay.myLocation?.let { myPt ->
                     mapView.controller.animateTo(myPt)
@@ -670,7 +693,6 @@ fun NativeOsmMapView(
                 mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
             }
 
-            // Render active stacked vector layers
             activeLayers.forEachIndexed { index, layer ->
                 val colorIdx = index % strokeColors.size
                 val sColor = strokeColors[colorIdx]
@@ -697,7 +719,6 @@ fun NativeOsmMapView(
                 mapView.overlays.add(marker)
             }
 
-            // Render custom user long-pressed Pins
             customPins.forEach { record ->
                 val pinMarker = OsmMarker(mapView)
                 pinMarker.position = OsmGeoPoint(record.latitude, record.longitude)
