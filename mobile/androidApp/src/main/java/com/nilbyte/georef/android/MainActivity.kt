@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
@@ -38,14 +39,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
 import com.nilbyte.georef.sync.IdempotentSyncEngine
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
+import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView as OsmMapView
+import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker as OsmMarker
 import org.osmdroid.views.overlay.Polygon as OsmPolygon
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
@@ -108,6 +112,7 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 
     val gisLayers by syncEngine.gisLayersFlow.collectAsState()
     val activeGisLayers by syncEngine.activeGisLayers.collectAsState()
+    val customPins by syncEngine.recordsFlow.collectAsState()
 
     // Request Location Permissions launcher
     val locationPermissionLauncher = rememberLauncherForActivityResult(
@@ -142,7 +147,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 
     Scaffold(
         bottomBar = {
-            // Floating 3-Button Navigation Bar with Safe Window Insets
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -162,7 +166,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                         horizontalArrangement = Arrangement.spacedBy(24.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1. Botão da Esquerda: Lista de Camadas
                         IconButton(onClick = { selectedScreen = 0 }) {
                             Icon(
                                 Icons.Default.List,
@@ -171,7 +174,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                             )
                         }
 
-                        // 2. Botão Central (+): Adicionar Camadas ao Mapa (Das Camadas Já Cadastradas)
                         IconButton(onClick = {
                             showRegisteredLayerPickerSheet = true
                         }) {
@@ -190,7 +192,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                             }
                         }
 
-                        // 3. Botão da Direita: Mapa Global
                         IconButton(onClick = { selectedScreen = 1 }) {
                             Icon(
                                 Icons.Default.LocationOn,
@@ -223,6 +224,8 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 )
                 1 -> WorldMapScreen(
                     activeLayers = activeGisLayers,
+                    customPins = customPins,
+                    syncEngine = syncEngine,
                     onOpenLayerToggleList = {
                         showRegisteredLayerPickerSheet = true
                     },
@@ -237,7 +240,6 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 )
             }
 
-            // BottomSheet with Toggle list of Registered Layers
             if (showRegisteredLayerPickerSheet) {
                 ModalBottomSheet(
                     onDismissRequest = { showRegisteredLayerPickerSheet = false },
@@ -382,18 +384,55 @@ fun RegisteredLayersListScreen(
 @Composable
 fun WorldMapScreen(
     activeLayers: List<GisLayer>,
+    customPins: List<GeorefRecord>,
+    syncEngine: IdempotentSyncEngine,
     onOpenLayerToggleList: () -> Unit,
     onRequestLocationPermission: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var isSatelliteMode by remember { mutableStateOf(false) }
     var triggerFocusLocationSignal by remember { mutableLongStateOf(0L) }
 
+    // Pin Editor Dialog State
+    var editingPinRecord by remember { mutableStateOf<GeorefRecord?>(null) }
+    var pinNameInput by remember { mutableStateOf("") }
+    var pinLatInput by remember { mutableStateOf("") }
+    var pinLngInput by remember { mutableStateOf("") }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // Fullscreen Native Multi-Layer Map Engine with Real-Time GPS User Location Overlay
+        // Fullscreen Native Multi-Layer Map Engine with Long-Press Pin Creation
         NativeOsmMapView(
             activeLayers = activeLayers,
+            customPins = customPins,
             isSatelliteMode = isSatelliteMode,
-            triggerFocusLocationSignal = triggerFocusLocationSignal
+            triggerFocusLocationSignal = triggerFocusLocationSignal,
+            onLongPressCreatePin = { lat, lng ->
+                val newId = UUID.randomUUID().toString()
+                val newRecord = GeorefRecord(
+                    id = newId,
+                    clientId = syncEngine.clientId,
+                    name = "Ponto #${customPins.size + 1}",
+                    description = "Criado via toque no mapa",
+                    latitude = lat,
+                    longitude = lng,
+                    elevation = 0.0,
+                    accuracy = 0.0,
+                    clientUpdatedAt = System.currentTimeMillis(),
+                    serverUpdatedAt = 0L,
+                    version = 1,
+                    isDeleted = false
+                )
+                editingPinRecord = newRecord
+                pinNameInput = newRecord.name
+                pinLatInput = String.format("%.6f", lat).replace(",", ".")
+                pinLngInput = String.format("%.6f", lng).replace(",", ".")
+            },
+            onSelectPinRecord = { record ->
+                editingPinRecord = record
+                pinNameInput = record.name
+                pinLatInput = String.format("%.6f", record.latitude).replace(",", ".")
+                pinLngInput = String.format("%.6f", record.longitude).replace(",", ".")
+            }
         )
 
         // Floating Top Left Header: Active Layers Chip
@@ -405,7 +444,6 @@ fun WorldMapScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top
         ) {
-            // Left: Interactive Layer Count Chip
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
@@ -426,12 +464,10 @@ fun WorldMapScreen(
                 }
             }
 
-            // Right Column: 1. Vetor/Satélite Toggle + 2. Focar na Minha Localização (Directly below 'Vetor')
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Button 1: Vetor / Satélite
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
@@ -447,7 +483,6 @@ fun WorldMapScreen(
                     )
                 }
 
-                // Button 2: Minimalist Circular GPS Location Icon Button (Located directly below 'Vetor')
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
@@ -470,14 +505,72 @@ fun WorldMapScreen(
                 }
             }
         }
+
+        // Edit Pin Coordinate Dialog
+        editingPinRecord?.let { pin ->
+            AlertDialog(
+                onDismissRequest = { editingPinRecord = null },
+                title = { Text("Editar Ponto (Pin)", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = pinNameInput,
+                            onValueChange = { pinNameInput = it },
+                            label = { Text("Nome do Ponto") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = pinLatInput,
+                            onValueChange = { pinLatInput = it },
+                            label = { Text("Latitude") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = pinLngInput,
+                            onValueChange = { pinLngInput = it },
+                            label = { Text("Longitude") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val newLat = pinLatInput.toDoubleOrNull() ?: pin.latitude
+                            val newLng = pinLngInput.toDoubleOrNull() ?: pin.longitude
+                            scope.launch {
+                                syncEngine.createFieldRecord(
+                                    id = pin.id,
+                                    name = pinNameInput.ifBlank { "Ponto" },
+                                    description = "Ponto no mapa",
+                                    latitude = newLat,
+                                    longitude = newLng
+                                )
+                                editingPinRecord = null
+                            }
+                        }
+                    ) {
+                        Text("Salvar")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { editingPinRecord = null }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
+        }
     }
 }
 
 @Composable
 fun NativeOsmMapView(
     activeLayers: List<GisLayer>,
+    customPins: List<GeorefRecord>,
     isSatelliteMode: Boolean,
-    triggerFocusLocationSignal: Long
+    triggerFocusLocationSignal: Long,
+    onLongPressCreatePin: (Double, Double) -> Unit,
+    onSelectPinRecord: (GeorefRecord) -> Unit
 ) {
     val context = LocalContext.current
 
@@ -501,14 +594,26 @@ fun NativeOsmMapView(
                 controller.setZoom(if (activeLayers.isNotEmpty()) 14.0 else 4.0)
                 controller.setCenter(OsmGeoPoint(targetLat, targetLng))
 
-                // 1. Two-finger touch gesture rotation overlay (Pinch & Rotate Map)
+                // 1. Long-press Touch Event Receiver to drop pins on long press
+                val eventsReceiver = object : MapEventsReceiver {
+                    override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean = false
+                    override fun longPressHelper(p: OsmGeoPoint?): Boolean {
+                        p?.let {
+                            onLongPressCreatePin(it.latitude, it.longitude)
+                        }
+                        return true
+                    }
+                }
+                overlays.add(MapEventsOverlay(eventsReceiver))
+
+                // 2. Two-finger touch gesture rotation overlay
                 val rotationGestureOverlay = RotationGestureOverlay(this).apply {
                     isEnabled = true
                 }
                 overlays.add(rotationGestureOverlay)
                 rotationOverlayState.value = rotationGestureOverlay
 
-                // 2. Real-time GPS Location Overlay
+                // 3. Real-time GPS Location Overlay
                 val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(ctx), this)
                 locationOverlay.enableMyLocation()
                 overlays.add(locationOverlay)
@@ -528,7 +633,18 @@ fun NativeOsmMapView(
                 locationOverlayState.value = it
             }
 
+            // Clear overlays while maintaining touch receivers & GPS location
             mapView.overlays.clear()
+            val eventsReceiver = object : MapEventsReceiver {
+                override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean = false
+                override fun longPressHelper(p: OsmGeoPoint?): Boolean {
+                    p?.let {
+                        onLongPressCreatePin(it.latitude, it.longitude)
+                    }
+                    return true
+                }
+            }
+            mapView.overlays.add(MapEventsOverlay(eventsReceiver))
             mapView.overlays.add(rotationOverlay)
             mapView.overlays.add(locationOverlay)
 
@@ -552,7 +668,7 @@ fun NativeOsmMapView(
                 mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
             }
 
-            // Render active stacked layers
+            // Render active stacked vector layers
             activeLayers.forEachIndexed { index, layer ->
                 val colorIdx = index % strokeColors.size
                 val sColor = strokeColors[colorIdx]
@@ -577,6 +693,21 @@ fun NativeOsmMapView(
                 marker.title = layer.name
                 marker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
                 mapView.overlays.add(marker)
+            }
+
+            // Render custom user long-pressed Pins
+            customPins.forEach { record ->
+                val pinMarker = OsmMarker(mapView)
+                pinMarker.position = OsmGeoPoint(record.latitude, record.longitude)
+                pinMarker.title = record.name
+                pinMarker.snippet = "Lat: ${record.latitude}, Lng: ${record.longitude}"
+                pinMarker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
+                pinMarker.setOnMarkerClickListener { m, _ ->
+                    m.showInfoWindow()
+                    onSelectPinRecord(record)
+                    true
+                }
+                mapView.overlays.add(pinMarker)
             }
 
             mapView.invalidate()
