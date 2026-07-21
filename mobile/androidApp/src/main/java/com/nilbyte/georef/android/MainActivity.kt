@@ -48,6 +48,7 @@ import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView as OsmMapView
 import org.osmdroid.views.overlay.Marker as OsmMarker
 import org.osmdroid.views.overlay.Polygon as OsmPolygon
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.util.UUID
@@ -489,6 +490,7 @@ fun NativeOsmMapView(
     val strokeColors = listOf("#00E676", "#29B6F6", "#FF9100", "#E040FB", "#FFD600")
     val fillColors = listOf("#3000E676", "#3029B6F6", "#30FF9100", "#30E040FB", "#30FFD600")
 
+    val rotationOverlayState = remember { mutableStateOf<RotationGestureOverlay?>(null) }
     val locationOverlayState = remember { mutableStateOf<MyLocationNewOverlay?>(null) }
 
     AndroidView(
@@ -499,7 +501,14 @@ fun NativeOsmMapView(
                 controller.setZoom(if (activeLayers.isNotEmpty()) 14.0 else 4.0)
                 controller.setCenter(OsmGeoPoint(targetLat, targetLng))
 
-                // Real-time GPS Location Overlay
+                // 1. Two-finger touch gesture rotation overlay (Pinch & Rotate Map)
+                val rotationGestureOverlay = RotationGestureOverlay(this).apply {
+                    isEnabled = true
+                }
+                overlays.add(rotationGestureOverlay)
+                rotationOverlayState.value = rotationGestureOverlay
+
+                // 2. Real-time GPS Location Overlay
                 val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(ctx), this)
                 locationOverlay.enableMyLocation()
                 overlays.add(locationOverlay)
@@ -509,13 +518,18 @@ fun NativeOsmMapView(
         update = { mapView ->
             mapView.setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
 
-            // Preserve location overlay while updating vector polygons
+            val rotationOverlay = rotationOverlayState.value ?: RotationGestureOverlay(mapView).also {
+                it.isEnabled = true
+                rotationOverlayState.value = it
+            }
+
             val locationOverlay = locationOverlayState.value ?: MyLocationNewOverlay(GpsMyLocationProvider(context), mapView).also {
                 it.enableMyLocation()
                 locationOverlayState.value = it
             }
 
             mapView.overlays.clear()
+            mapView.overlays.add(rotationOverlay)
             mapView.overlays.add(locationOverlay)
 
             // Handle "Focar na minha localização" signal
