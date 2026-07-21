@@ -48,6 +48,7 @@ import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
+import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView as OsmMapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker as OsmMarker
@@ -591,6 +592,7 @@ fun NativeOsmMapView(
             OsmMapView(ctx).apply {
                 setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true)
+                zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
                 controller.setZoom(if (activeLayers.isNotEmpty()) 14.0 else 4.0)
                 controller.setCenter(OsmGeoPoint(targetLat, targetLng))
 
