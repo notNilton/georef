@@ -693,7 +693,6 @@ fun NativeOsmMapView(
                 mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
             }
 
-            // Render active stacked vector layers with EXACT multi-part polygon rings
             activeLayers.forEachIndexed { index, layer ->
                 val colorIdx = index % strokeColors.size
                 val sColor = strokeColors[colorIdx]
@@ -714,7 +713,6 @@ fun NativeOsmMapView(
                     )
                 }
 
-                // Render each part ring as an independent closed polygon!
                 partsList.forEach { partCoords ->
                     if (partCoords.size >= 3) {
                         val polygon = OsmPolygon(mapView)
