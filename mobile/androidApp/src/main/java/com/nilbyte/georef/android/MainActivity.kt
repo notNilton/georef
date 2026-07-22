@@ -26,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
@@ -66,10 +65,10 @@ import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.util.UUID
 
-// High-Resolution Satellite Tile Sources up to Zoom Level 20 (~0.3m resolution)
-val ESRI_WORLD_IMAGERY = object : OnlineTileSourceBase(
-    "EsriWorldImagery",
-    0, 20, 256, ".jpg",
+// 100% FREE Satellite & Topographic Tile Sources (Zero API Keys required)
+val ESRI_SATELLITE_10M_FREE = object : OnlineTileSourceBase(
+    "EsriWorldImageryFree",
+    0, 19, 256, ".jpg",
     arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
 ) {
     override fun getTileURLString(pMapTileIndex: Long): String {
@@ -77,13 +76,13 @@ val ESRI_WORLD_IMAGERY = object : OnlineTileSourceBase(
     }
 }
 
-val GOOGLE_SATELLITE = object : OnlineTileSourceBase(
-    "GoogleSatellite",
-    0, 20, 256, ".jpg",
-    arrayOf("https://mt1.google.com/vt/lyrs=s&x=")
+val TOPO_MAP_10M_FREE = object : OnlineTileSourceBase(
+    "OpenTopoMapFree",
+    0, 17, 256, ".png",
+    arrayOf("https://a.tile.opentopomap.org/")
 ) {
     override fun getTileURLString(pMapTileIndex: Long): String {
-        return baseUrl + "${MapTileIndex.getX(pMapTileIndex)}&y=${MapTileIndex.getY(pMapTileIndex)}&z=${MapTileIndex.getZoom(pMapTileIndex)}"
+        return baseUrl + "${MapTileIndex.getZoom(pMapTileIndex)}/${MapTileIndex.getX(pMapTileIndex)}/${MapTileIndex.getY(pMapTileIndex)}.png"
     }
 }
 
@@ -162,8 +161,8 @@ class MainActivity : ComponentActivity() {
 
 enum class MapTileProviderMode {
     MAPNIK_VECTOR,
-    ESRI_SATELLITE_HD,
-    GOOGLE_SATELLITE_HD
+    ESRI_SATELLITE_FREE,
+    TOPO_RELIEF_FREE
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -459,7 +458,7 @@ fun WorldMapScreen(
     onRequestLocationPermission: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var tileProviderMode by remember { mutableStateOf(MapTileProviderMode.ESRI_SATELLITE_HD) }
+    var tileProviderMode by remember { mutableStateOf(MapTileProviderMode.ESRI_SATELLITE_FREE) }
     var triggerFocusLocationSignal by remember { mutableLongStateOf(0L) }
 
     var editingPinRecord by remember { mutableStateOf<GeorefRecord?>(null) }
@@ -540,16 +539,16 @@ fun WorldMapScreen(
                     shadowElevation = 4.dp,
                     modifier = Modifier.clickable {
                         tileProviderMode = when (tileProviderMode) {
-                            MapTileProviderMode.ESRI_SATELLITE_HD -> MapTileProviderMode.GOOGLE_SATELLITE_HD
-                            MapTileProviderMode.GOOGLE_SATELLITE_HD -> MapTileProviderMode.MAPNIK_VECTOR
-                            MapTileProviderMode.MAPNIK_VECTOR -> MapTileProviderMode.ESRI_SATELLITE_HD
+                            MapTileProviderMode.ESRI_SATELLITE_FREE -> MapTileProviderMode.TOPO_RELIEF_FREE
+                            MapTileProviderMode.TOPO_RELIEF_FREE -> MapTileProviderMode.MAPNIK_VECTOR
+                            MapTileProviderMode.MAPNIK_VECTOR -> MapTileProviderMode.ESRI_SATELLITE_FREE
                         }
                     }
                 ) {
                     Text(
                         text = when (tileProviderMode) {
-                            MapTileProviderMode.ESRI_SATELLITE_HD -> "Satélite (ArcGIS HD)"
-                            MapTileProviderMode.GOOGLE_SATELLITE_HD -> "Satélite (Google HD)"
+                            MapTileProviderMode.ESRI_SATELLITE_FREE -> "Satélite (Grátis)"
+                            MapTileProviderMode.TOPO_RELIEF_FREE -> "Relevo (Grátis)"
                             MapTileProviderMode.MAPNIK_VECTOR -> "Vetor (OSM)"
                         },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -662,8 +661,8 @@ fun NativeOsmMapView(
     val locationOverlayState = remember { mutableStateOf<MyLocationNewOverlay?>(null) }
 
     val tileSource = when (tileProviderMode) {
-        MapTileProviderMode.ESRI_SATELLITE_HD -> ESRI_WORLD_IMAGERY
-        MapTileProviderMode.GOOGLE_SATELLITE_HD -> GOOGLE_SATELLITE
+        MapTileProviderMode.ESRI_SATELLITE_FREE -> ESRI_SATELLITE_10M_FREE
+        MapTileProviderMode.TOPO_RELIEF_FREE -> TOPO_MAP_10M_FREE
         MapTileProviderMode.MAPNIK_VECTOR -> TileSourceFactory.MAPNIK
     }
 
@@ -671,7 +670,7 @@ fun NativeOsmMapView(
         factory = { ctx ->
             OsmMapView(ctx).apply {
                 setTileSource(tileSource)
-                maxZoomLevel = 20.0
+                maxZoomLevel = 19.0
                 setMultiTouchControls(true)
                 zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
                 controller.setZoom(if (activeLayers.isNotEmpty()) 15.0 else 4.0)
@@ -702,7 +701,7 @@ fun NativeOsmMapView(
         },
         update = { mapView ->
             mapView.setTileSource(tileSource)
-            mapView.maxZoomLevel = 20.0
+            mapView.maxZoomLevel = 19.0
 
             val rotationOverlay = rotationOverlayState.value ?: RotationGestureOverlay(mapView).also {
                 it.isEnabled = true
