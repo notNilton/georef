@@ -17,7 +17,7 @@ data class GisFeature(
     val name: String,
     val geometryType: String, // POINT, POLYGON, MULTIPOLYGON, LINESTRING
     val center: GeoPoint,
-    val coordinates: List<GeoPoint> = emptyList(), // Exact vertex points of complex polygon
+    val coordinates: List<GeoPoint> = emptyList(), // Vertex points of this specific part
     val properties: Map<String, String> = emptyMap()
 )
 
@@ -43,7 +43,9 @@ data class GisLayer(
     val centerLng: Double,
     val features: List<GisFeature> = emptyList(),
     @SerialName("polygon_coordinates")
-    val polygonCoordinates: List<GeoPoint> = emptyList(), // Detailed complex polygon vertices
+    val polygonCoordinates: List<GeoPoint> = emptyList(),
+    @SerialName("polygon_parts")
+    val polygonParts: List<List<GeoPoint>> = emptyList(), // Separate distinct rings/polygons without cross-lines
     @SerialName("client_updated_at")
     val clientUpdatedAt: Long,
     @SerialName("server_updated_at")

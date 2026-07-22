@@ -693,32 +693,40 @@ fun NativeOsmMapView(
                 mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
             }
 
-            // Render active stacked vector layers with EXACT complex polygon vertices
+            // Render active stacked vector layers with EXACT multi-part polygon rings
             activeLayers.forEachIndexed { index, layer ->
                 val colorIdx = index % strokeColors.size
                 val sColor = strokeColors[colorIdx]
                 val fColor = fillColors[colorIdx]
 
-                val coords = if (layer.polygonCoordinates.isNotEmpty()) {
-                    layer.polygonCoordinates
+                val partsList = if (layer.polygonParts.isNotEmpty()) {
+                    layer.polygonParts
+                } else if (layer.polygonCoordinates.isNotEmpty()) {
+                    listOf(layer.polygonCoordinates)
                 } else {
-                    layer.features.firstOrNull { it.coordinates.isNotEmpty() }?.coordinates
-                        ?: listOf(
+                    listOf(
+                        listOf(
                             com.nilbyte.georef.domain.model.GeoPoint(layer.minLat, layer.minLng),
                             com.nilbyte.georef.domain.model.GeoPoint(layer.maxLat, layer.minLng),
                             com.nilbyte.georef.domain.model.GeoPoint(layer.maxLat, layer.maxLng),
                             com.nilbyte.georef.domain.model.GeoPoint(layer.minLat, layer.maxLng)
                         )
+                    )
                 }
 
-                val polygon = OsmPolygon(mapView)
-                polygon.fillPaint.color = android.graphics.Color.parseColor(fColor)
-                polygon.outlinePaint.color = android.graphics.Color.parseColor(sColor)
-                polygon.outlinePaint.strokeWidth = 5f
+                // Render each part ring as an independent closed polygon!
+                partsList.forEach { partCoords ->
+                    if (partCoords.size >= 3) {
+                        val polygon = OsmPolygon(mapView)
+                        polygon.fillPaint.color = android.graphics.Color.parseColor(fColor)
+                        polygon.outlinePaint.color = android.graphics.Color.parseColor(sColor)
+                        polygon.outlinePaint.strokeWidth = 5f
 
-                val pts = coords.map { OsmGeoPoint(it.latitude, it.longitude) }
-                polygon.setPoints(pts)
-                mapView.overlays.add(polygon)
+                        val pts = partCoords.map { OsmGeoPoint(it.latitude, it.longitude) }
+                        polygon.setPoints(pts)
+                        mapView.overlays.add(polygon)
+                    }
+                }
 
                 val marker = OsmMarker(mapView)
                 marker.position = OsmGeoPoint(layer.centerLat, layer.centerLng)
