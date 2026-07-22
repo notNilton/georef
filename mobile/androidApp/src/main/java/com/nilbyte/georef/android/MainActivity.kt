@@ -26,7 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.nilbyte.georef.domain.gis.GisAreaCalculator
 import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
@@ -51,7 +52,9 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.MapTileIndex
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView as OsmMapView
@@ -62,6 +65,27 @@ import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.util.UUID
+
+// High-Resolution Satellite Tile Sources up to Zoom Level 20 (~0.3m resolution)
+val ESRI_WORLD_IMAGERY = object : OnlineTileSourceBase(
+    "EsriWorldImagery",
+    0, 20, 256, ".jpg",
+    arrayOf("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String {
+        return baseUrl + "${MapTileIndex.getZoom(pMapTileIndex)}/${MapTileIndex.getY(pMapTileIndex)}/${MapTileIndex.getX(pMapTileIndex)}"
+    }
+}
+
+val GOOGLE_SATELLITE = object : OnlineTileSourceBase(
+    "GoogleSatellite",
+    0, 20, 256, ".jpg",
+    arrayOf("https://mt1.google.com/vt/lyrs=s&x=")
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String {
+        return baseUrl + "${MapTileIndex.getX(pMapTileIndex)}&y=${MapTileIndex.getY(pMapTileIndex)}&z=${MapTileIndex.getZoom(pMapTileIndex)}"
+    }
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -134,6 +158,12 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+enum class MapTileProviderMode {
+    MAPNIK_VECTOR,
+    ESRI_SATELLITE_HD,
+    GOOGLE_SATELLITE_HD
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -329,7 +359,13 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                                                     Text(layer.name, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                                     FileTypeBadge(layer.fileType)
                                                 }
-                                                Text("Lat: ${layer.centerLat}, Lng: ${layer.centerLng}", fontSize = 10.sp, color = Color.Gray)
+                                                val areaHa = GisAreaCalculator.calculateAreaHectares(layer.polygonCoordinates)
+                                                val perimKm = GisAreaCalculator.calculatePerimeterKm(layer.polygonCoordinates)
+                                                Text(
+                                                    text = if (areaHa > 0) String.format("%.2f ha • %.2f km", areaHa, perimKm) else "Lat: ${layer.centerLat}, Lng: ${layer.centerLng}",
+                                                    fontSize = 11.sp,
+                                                    color = Color.Gray
+                                                )
                                             }
 
                                             Switch(
@@ -423,7 +459,7 @@ fun WorldMapScreen(
     onRequestLocationPermission: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var isSatelliteMode by remember { mutableStateOf(false) }
+    var tileProviderMode by remember { mutableStateOf(MapTileProviderMode.ESRI_SATELLITE_HD) }
     var triggerFocusLocationSignal by remember { mutableLongStateOf(0L) }
 
     var editingPinRecord by remember { mutableStateOf<GeorefRecord?>(null) }
@@ -435,7 +471,7 @@ fun WorldMapScreen(
         NativeOsmMapView(
             activeLayers = activeLayers,
             customPins = customPins,
-            isSatelliteMode = isSatelliteMode,
+            tileProviderMode = tileProviderMode,
             triggerFocusLocationSignal = triggerFocusLocationSignal,
             onLongPressCreatePin = { lat, lng ->
                 val newId = UUID.randomUUID().toString()
@@ -502,10 +538,20 @@ fun WorldMapScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
                     shadowElevation = 4.dp,
-                    modifier = Modifier.clickable { isSatelliteMode = !isSatelliteMode }
+                    modifier = Modifier.clickable {
+                        tileProviderMode = when (tileProviderMode) {
+                            MapTileProviderMode.ESRI_SATELLITE_HD -> MapTileProviderMode.GOOGLE_SATELLITE_HD
+                            MapTileProviderMode.GOOGLE_SATELLITE_HD -> MapTileProviderMode.MAPNIK_VECTOR
+                            MapTileProviderMode.MAPNIK_VECTOR -> MapTileProviderMode.ESRI_SATELLITE_HD
+                        }
+                    }
                 ) {
                     Text(
-                        text = if (isSatelliteMode) "Satélite" else "Vetor",
+                        text = when (tileProviderMode) {
+                            MapTileProviderMode.ESRI_SATELLITE_HD -> "Satélite (ArcGIS HD)"
+                            MapTileProviderMode.GOOGLE_SATELLITE_HD -> "Satélite (Google HD)"
+                            MapTileProviderMode.MAPNIK_VECTOR -> "Vetor (OSM)"
+                        },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
@@ -596,7 +642,7 @@ fun WorldMapScreen(
 fun NativeOsmMapView(
     activeLayers: List<GisLayer>,
     customPins: List<GeorefRecord>,
-    isSatelliteMode: Boolean,
+    tileProviderMode: MapTileProviderMode,
     triggerFocusLocationSignal: Long,
     onLongPressCreatePin: (Double, Double) -> Unit,
     onSelectPinRecord: (GeorefRecord) -> Unit
@@ -615,13 +661,20 @@ fun NativeOsmMapView(
     val rotationOverlayState = remember { mutableStateOf<RotationGestureOverlay?>(null) }
     val locationOverlayState = remember { mutableStateOf<MyLocationNewOverlay?>(null) }
 
+    val tileSource = when (tileProviderMode) {
+        MapTileProviderMode.ESRI_SATELLITE_HD -> ESRI_WORLD_IMAGERY
+        MapTileProviderMode.GOOGLE_SATELLITE_HD -> GOOGLE_SATELLITE
+        MapTileProviderMode.MAPNIK_VECTOR -> TileSourceFactory.MAPNIK
+    }
+
     AndroidView(
         factory = { ctx ->
             OsmMapView(ctx).apply {
-                setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
+                setTileSource(tileSource)
+                maxZoomLevel = 20.0
                 setMultiTouchControls(true)
                 zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-                controller.setZoom(if (activeLayers.isNotEmpty()) 14.0 else 4.0)
+                controller.setZoom(if (activeLayers.isNotEmpty()) 15.0 else 4.0)
                 controller.setCenter(OsmGeoPoint(targetLat, targetLng))
 
                 val eventsReceiver = object : MapEventsReceiver {
@@ -648,7 +701,8 @@ fun NativeOsmMapView(
             }
         },
         update = { mapView ->
-            mapView.setTileSource(if (isSatelliteMode) TileSourceFactory.USGS_SAT else TileSourceFactory.MAPNIK)
+            mapView.setTileSource(tileSource)
+            mapView.maxZoomLevel = 20.0
 
             val rotationOverlay = rotationOverlayState.value ?: RotationGestureOverlay(mapView).also {
                 it.isEnabled = true
@@ -728,7 +782,8 @@ fun NativeOsmMapView(
 
                 val marker = OsmMarker(mapView)
                 marker.position = OsmGeoPoint(layer.centerLat, layer.centerLng)
-                marker.title = layer.name
+                val areaHa = GisAreaCalculator.calculateAreaHectares(layer.polygonCoordinates)
+                marker.title = if (areaHa > 0) "${layer.name} (${String.format("%.2f", areaHa)} ha)" else layer.name
                 marker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_BOTTOM)
                 mapView.overlays.add(marker)
             }
@@ -783,6 +838,9 @@ fun GisLayerItemCard(
     onRemove: () -> Unit,
     onClick: () -> Unit
 ) {
+    val areaHa = GisAreaCalculator.calculateAreaHectares(layer.polygonCoordinates)
+    val perimKm = GisAreaCalculator.calculatePerimeterKm(layer.polygonCoordinates)
+
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -809,7 +867,16 @@ fun GisLayerItemCard(
                     FileTypeBadge(layer.fileType)
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("${layer.centerLat}, ${layer.centerLng}", fontSize = 11.sp, color = Color.Gray)
+                if (areaHa > 0) {
+                    Text(
+                        text = "Área: ${String.format("%.2f", areaHa)} ha | Perímetro: ${String.format("%.2f", perimKm)} km",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                } else {
+                    Text("${layer.centerLat}, ${layer.centerLng}", fontSize = 11.sp, color = Color.Gray)
+                }
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
