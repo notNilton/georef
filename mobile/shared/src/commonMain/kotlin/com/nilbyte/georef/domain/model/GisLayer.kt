@@ -15,8 +15,9 @@ enum class GisFileType {
 data class GisFeature(
     val id: String,
     val name: String,
-    val geometryType: String, // POINT, POLYGON, LINESTRING
+    val geometryType: String, // POINT, POLYGON, MULTIPOLYGON, LINESTRING
     val center: GeoPoint,
+    val coordinates: List<GeoPoint> = emptyList(), // Exact vertex points of complex polygon
     val properties: Map<String, String> = emptyMap()
 )
 
@@ -41,6 +42,8 @@ data class GisLayer(
     @SerialName("center_lng")
     val centerLng: Double,
     val features: List<GisFeature> = emptyList(),
+    @SerialName("polygon_coordinates")
+    val polygonCoordinates: List<GeoPoint> = emptyList(), // Detailed complex polygon vertices
     @SerialName("client_updated_at")
     val clientUpdatedAt: Long,
     @SerialName("server_updated_at")

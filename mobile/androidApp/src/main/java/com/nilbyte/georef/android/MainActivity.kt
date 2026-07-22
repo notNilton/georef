@@ -693,22 +693,30 @@ fun NativeOsmMapView(
                 mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
             }
 
+            // Render active stacked vector layers with EXACT complex polygon vertices
             activeLayers.forEachIndexed { index, layer ->
                 val colorIdx = index % strokeColors.size
                 val sColor = strokeColors[colorIdx]
                 val fColor = fillColors[colorIdx]
+
+                val coords = if (layer.polygonCoordinates.isNotEmpty()) {
+                    layer.polygonCoordinates
+                } else {
+                    layer.features.firstOrNull { it.coordinates.isNotEmpty() }?.coordinates
+                        ?: listOf(
+                            com.nilbyte.georef.domain.model.GeoPoint(layer.minLat, layer.minLng),
+                            com.nilbyte.georef.domain.model.GeoPoint(layer.maxLat, layer.minLng),
+                            com.nilbyte.georef.domain.model.GeoPoint(layer.maxLat, layer.maxLng),
+                            com.nilbyte.georef.domain.model.GeoPoint(layer.minLat, layer.maxLng)
+                        )
+                }
 
                 val polygon = OsmPolygon(mapView)
                 polygon.fillPaint.color = android.graphics.Color.parseColor(fColor)
                 polygon.outlinePaint.color = android.graphics.Color.parseColor(sColor)
                 polygon.outlinePaint.strokeWidth = 5f
 
-                val pts = listOf(
-                    OsmGeoPoint(layer.minLat, layer.minLng),
-                    OsmGeoPoint(layer.maxLat, layer.minLng),
-                    OsmGeoPoint(layer.maxLat, layer.maxLng),
-                    OsmGeoPoint(layer.minLat, layer.maxLng)
-                )
+                val pts = coords.map { OsmGeoPoint(it.latitude, it.longitude) }
                 polygon.setPoints(pts)
                 mapView.overlays.add(polygon)
 

@@ -7,18 +7,74 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
 
-class GisLocalDatabase {
+class GisLocalDatabase(
+    private val storageDir: File? = null
+) {
     private val mutex = Mutex()
     private val layersMap = mutableMapOf<String, GisLayer>()
     private val outboxQueue = mutableSetOf<String>()
     private val activeLayerIds = mutableSetOf<String>()
+
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
+    private val dbFile: File? by lazy {
+        if (storageDir != null && storageDir.exists()) {
+            File(storageDir, "gis_layers_v2.json")
+        } else {
+            val defaultPath = File("/data/data/com.nilbyte.georef.android/files")
+            if (!defaultPath.exists()) defaultPath.mkdirs()
+            File(defaultPath, "gis_layers_v2.json")
+        }
+    }
 
     private val _gisLayersFlow = MutableStateFlow<List<GisLayer>>(emptyList())
     val gisLayersFlow: StateFlow<List<GisLayer>> = _gisLayersFlow.asStateFlow()
 
     private val _activeGisLayers = MutableStateFlow<List<GisLayer>>(emptyList())
     val activeGisLayers: StateFlow<List<GisLayer>> = _activeGisLayers.asStateFlow()
+
+    init {
+        loadFromDisk()
+    }
+
+    private fun loadFromDisk() {
+        try {
+            val file = dbFile
+            if (file != null && file.exists()) {
+                val jsonStr = file.readText()
+                if (jsonStr.isNotBlank()) {
+                    val loaded = json.decodeFromString<List<GisLayer>>(jsonStr)
+                    for (layer in loaded) {
+                        layersMap[layer.id] = layer
+                        activeLayerIds.add(layer.id)
+                        if (layer.syncStatus != SyncStatus.SYNCED) {
+                            outboxQueue.add(layer.id)
+                        }
+                    }
+                    publishUpdates()
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun saveToDisk() {
+        try {
+            val file = dbFile
+            if (file != null) {
+                if (file.parentFile?.exists() == false) {
+                    file.parentFile?.mkdirs()
+                }
+                val list = layersMap.values.filter { !it.isDeleted }.toList()
+                val jsonStr = json.encodeToString(list)
+                file.writeText(jsonStr)
+            }
+        } catch (_: Exception) {
+        }
+    }
 
     suspend fun saveOrUpdateLayer(layer: GisLayer, isPendingSync: Boolean = true) = mutex.withLock {
         val updatedLayer = if (isPendingSync && layer.syncStatus == SyncStatus.SYNCED) {
@@ -33,8 +89,8 @@ class GisLocalDatabase {
         } else {
             outboxQueue.remove(layer.id)
         }
-        // Auto-enable newly imported layer on the map stack
         activeLayerIds.add(layer.id)
+        saveToDisk()
         publishUpdates()
     }
 
@@ -51,6 +107,7 @@ class GisLocalDatabase {
         layersMap.remove(id)
         activeLayerIds.remove(id)
         outboxQueue.remove(id)
+        saveToDisk()
         publishUpdates()
     }
 
@@ -63,6 +120,7 @@ class GisLocalDatabase {
             )
         }
         outboxQueue.remove(id)
+        saveToDisk()
         publishUpdates()
     }
 

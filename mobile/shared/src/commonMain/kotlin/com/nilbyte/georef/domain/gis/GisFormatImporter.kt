@@ -11,6 +11,7 @@ import kotlinx.datetime.Clock
 
 /**
  * Multi-format GIS Importer supporting GeoPDF, GeoJSON, KML, GeoTIFF, and ESRI Shapefiles (.shp).
+ * Parses exact complex polygon vertices for high-precision GIS mapping.
  */
 class GisFormatImporter {
     private val pdfExtractor = GeoPdfExtractor()
@@ -33,7 +34,7 @@ class GisFormatImporter {
         val contentStr = fileBytes.decodeToString()
         val now = Clock.System.now().toEpochMilliseconds()
 
-        val (box, features) = when (fileType) {
+        val (box, polygonCoords, features) = when (fileType) {
             GisFileType.GEOPDF -> parseGeoPdf(fileBytes, fileName)
             GisFileType.GEOJSON -> parseGeoJson(contentStr)
             GisFileType.KML -> parseKml(contentStr)
@@ -55,6 +56,7 @@ class GisFormatImporter {
             centerLat = box.center.latitude,
             centerLng = box.center.longitude,
             features = features,
+            polygonCoordinates = polygonCoords,
             clientUpdatedAt = now,
             serverUpdatedAt = 0L,
             version = 1,
@@ -63,7 +65,7 @@ class GisFormatImporter {
         )
     }
 
-    private fun parseGeoPdf(bytes: ByteArray, fileName: String): Pair<GeoBoundingBox, List<GisFeature>> {
+    private fun parseGeoPdf(bytes: ByteArray, fileName: String): Triple<GeoBoundingBox, List<GeoPoint>, List<GisFeature>> {
         val pdfMeta = pdfExtractor.extractGeoMetadata(bytes, fileName)
         val features = pdfMeta.extractedPoints.mapIndexed { idx, pt ->
             GisFeature(
@@ -71,14 +73,21 @@ class GisFormatImporter {
                 name = "Ponto Amostra #$idx",
                 geometryType = "POINT",
                 center = pt,
+                coordinates = listOf(pt),
                 properties = mapOf("fonte" to "GeoPDF Dicionário")
             )
         }
-        return Pair(pdfMeta.boundingBox, features)
+        val coords = listOf(
+            GeoPoint(pdfMeta.boundingBox.minLat, pdfMeta.boundingBox.minLng),
+            GeoPoint(pdfMeta.boundingBox.maxLat, pdfMeta.boundingBox.minLng),
+            GeoPoint(pdfMeta.boundingBox.maxLat, pdfMeta.boundingBox.maxLng),
+            GeoPoint(pdfMeta.boundingBox.minLat, pdfMeta.boundingBox.maxLng)
+        )
+        return Triple(pdfMeta.boundingBox, coords, features)
     }
 
-    private fun parseGeoJson(content: String): Pair<GeoBoundingBox, List<GisFeature>> {
-        val coordRegex = Regex("""(-?\d{1,3}\.\d{3,8})\s*,\s*(-?\d{1,2}\.\d{3,8})""")
+    private fun parseGeoJson(content: String): Triple<GeoBoundingBox, List<GeoPoint>, List<GisFeature>> {
+        val coordRegex = Regex("""(-?\d{1,3}\.\d{3,10})\s*,\s*(-?\d{1,2}\.\d{3,10})""")
         val points = mutableListOf<GeoPoint>()
 
         for (match in coordRegex.findAll(content)) {
@@ -99,21 +108,22 @@ class GisFormatImporter {
             GeoBoundingBox(-23.56, -46.64, -23.54, -46.62)
         }
 
-        val features = points.take(10).mapIndexed { idx, pt ->
+        val features = listOf(
             GisFeature(
-                id = "geojson-feat-$idx",
-                name = "Vetor GeoJSON #$idx",
+                id = "geojson-feat-1",
+                name = "Polígono GeoJSON",
                 geometryType = "POLYGON",
-                center = pt,
+                center = box.center,
+                coordinates = points,
                 properties = mapOf("camada" to "Vetor GeoJSON")
             )
-        }
+        )
 
-        return Pair(box, features)
+        return Triple(box, points, features)
     }
 
-    private fun parseKml(content: String): Pair<GeoBoundingBox, List<GisFeature>> {
-        val coordRegex = Regex("""(-?\d{1,3}\.\d{3,8})\s*,\s*(-?\d{1,2}\.\d{3,8})""")
+    private fun parseKml(content: String): Triple<GeoBoundingBox, List<GeoPoint>, List<GisFeature>> {
+        val coordRegex = Regex("""(-?\d{1,3}\.\d{3,10})\s*,\s*(-?\d{1,2}\.\d{3,10})""")
         val points = mutableListOf<GeoPoint>()
 
         for (match in coordRegex.findAll(content)) {
@@ -136,24 +146,30 @@ class GisFormatImporter {
         }
 
         val features = listOf(
-            GisFeature("kml-1", "Área Delimitada KML", "POLYGON", box.center, mapOf("formato" to "KML Placemark"))
+            GisFeature("kml-1", "Área Delimitada KML", "POLYGON", box.center, points, mapOf("formato" to "KML Placemark"))
         )
 
-        return Pair(box, features)
+        return Triple(box, points, features)
     }
 
-    private fun parseGeoTiff(_content: String): Pair<GeoBoundingBox, List<GisFeature>> {
+    private fun parseGeoTiff(_content: String): Triple<GeoBoundingBox, List<GeoPoint>, List<GisFeature>> {
         val box = GeoBoundingBox(-15.7939, -47.8828, -15.7700, -47.8600)
-        val features = listOf(
-            GisFeature("geotiff-1", "Raster Satélite GeoTIFF", "RASTER", box.center, mapOf("resolucao" to "10m"))
+        val coords = listOf(
+            GeoPoint(box.minLat, box.minLng),
+            GeoPoint(box.maxLat, box.minLng),
+            GeoPoint(box.maxLat, box.maxLng),
+            GeoPoint(box.minLat, box.maxLng)
         )
-        return Pair(box, features)
+        val features = listOf(
+            GisFeature("geotiff-1", "Raster Satélite GeoTIFF", "RASTER", box.center, coords, mapOf("resolucao" to "10m"))
+        )
+        return Triple(box, coords, features)
     }
 
     /**
-     * Reads ESRI Shapefile (.shp) binary header (bytes 36..67 minX, minY, maxX, maxY).
+     * Parses ESRI Shapefile (.shp) binary format including Polygon (Type 5) / PolyLine (Type 3) vertex points.
      */
-    private fun parseShapefile(bytes: ByteArray, fileName: String): Pair<GeoBoundingBox, List<GisFeature>> {
+    private fun parseShapefile(bytes: ByteArray, fileName: String): Triple<GeoBoundingBox, List<GeoPoint>, List<GisFeature>> {
         return try {
             if (bytes.size >= 100) {
                 val minX = readDoubleLE(bytes, 36)
@@ -167,10 +183,60 @@ class GisFormatImporter {
                     GeoBoundingBox(-11.9454, -58.3422, -11.8992, -58.2935)
                 }
 
+                val polygonPoints = mutableListOf<GeoPoint>()
+                var offset = 100
+
+                // Parse records in ESRI Shapefile
+                while (offset + 12 <= bytes.size) {
+                    val contentLengthWords = readIntBE(bytes, offset + 4)
+                    val recordLengthBytes = contentLengthWords * 2
+                    val recordStart = offset + 8
+
+                    if (recordStart + 4 <= bytes.size) {
+                        val shapeType = readIntLE(bytes, recordStart)
+                        if (shapeType == 5 || shapeType == 3) { // Polygon or PolyLine
+                            if (recordStart + 44 <= bytes.size) {
+                                val numParts = readIntLE(bytes, recordStart + 36)
+                                val numPoints = readIntLE(bytes, recordStart + 40)
+
+                                var pointsOffset = recordStart + 44 + (numParts * 4)
+                                var readCount = 0
+
+                                while (readCount < numPoints && pointsOffset + 16 <= bytes.size && pointsOffset + 16 <= recordStart + recordLengthBytes) {
+                                    val px = readDoubleLE(bytes, pointsOffset)
+                                    val py = readDoubleLE(bytes, pointsOffset + 8)
+
+                                    if (py in -90.0..90.0 && px in -180.0..180.0) {
+                                        polygonPoints.add(GeoPoint(py, px))
+                                    }
+
+                                    pointsOffset += 16
+                                    readCount++
+                                }
+                            }
+                        }
+                    }
+
+                    offset += 8 + recordLengthBytes
+                    if (recordLengthBytes <= 0) break
+                }
+
+                val finalCoords = if (polygonPoints.isNotEmpty()) {
+                    polygonPoints
+                } else {
+                    listOf(
+                        GeoPoint(box.minLat, box.minLng),
+                        GeoPoint(box.maxLat, box.minLng),
+                        GeoPoint(box.maxLat, box.maxLng),
+                        GeoPoint(box.minLat, box.maxLng)
+                    )
+                }
+
                 val features = listOf(
-                    GisFeature("shp-1", "Área do Imóvel SICAR", "POLYGON", box.center, mapOf("fonte" to "SICAR Shapefile"))
+                    GisFeature("shp-1", "Área do Imóvel SICAR", "POLYGON", box.center, finalCoords, mapOf("fonte" to "SICAR Shapefile"))
                 )
-                Pair(box, features)
+
+                Triple(box, finalCoords, features)
             } else {
                 fallbackShapefileBox(fileName)
             }
@@ -179,10 +245,30 @@ class GisFormatImporter {
         }
     }
 
-    private fun fallbackShapefileBox(fileName: String): Pair<GeoBoundingBox, List<GisFeature>> {
+    private fun fallbackShapefileBox(fileName: String): Triple<GeoBoundingBox, List<GeoPoint>, List<GisFeature>> {
         val box = GeoBoundingBox(-11.9454, -58.3422, -11.8992, -58.2935)
-        val features = listOf(GisFeature("shp-1", "Imóvel $fileName", "POLYGON", box.center, emptyMap()))
-        return Pair(box, features)
+        val coords = listOf(
+            GeoPoint(box.minLat, box.minLng),
+            GeoPoint(box.maxLat, box.minLng),
+            GeoPoint(box.maxLat, box.maxLng),
+            GeoPoint(box.minLat, box.maxLng)
+        )
+        val features = listOf(GisFeature("shp-1", "Imóvel $fileName", "POLYGON", box.center, coords, emptyMap()))
+        return Triple(box, coords, features)
+    }
+
+    private fun readIntBE(bytes: ByteArray, offset: Int): Int {
+        return ((bytes[offset].toInt() and 0xFF) shl 24) or
+               ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
+               ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
+               (bytes[offset + 3].toInt() and 0xFF)
+    }
+
+    private fun readIntLE(bytes: ByteArray, offset: Int): Int {
+        return (bytes[offset].toInt() and 0xFF) or
+               ((bytes[offset + 1].toInt() and 0xFF) shl 8) or
+               ((bytes[offset + 2].toInt() and 0xFF) shl 16) or
+               ((bytes[offset + 3].toInt() and 0xFF) shl 24)
     }
 
     private fun readDoubleLE(bytes: ByteArray, offset: Int): Double {
