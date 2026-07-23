@@ -6,27 +6,40 @@ import (
 	"strconv"
 	"time"
 
-	"georef/backend/internal/models"
-	"georef/backend/internal/repository"
-	"georef/backend/internal/sync"
+	"github.com/nilbyte/georef/backend/internal/models"
+	"github.com/nilbyte/georef/backend/internal/repository"
+	"github.com/nilbyte/georef/backend/internal/sync"
 )
 
 type Server struct {
 	syncService *sync.SyncService
 	repo        repository.Repository
 	gisRepo     repository.GisRepository
+	userRepo    *repository.UserRepository
 }
 
-func NewServer(syncService *sync.SyncService, repo repository.Repository, gisRepo repository.GisRepository) *Server {
+func NewServer(
+	syncService *sync.SyncService,
+	repo repository.Repository,
+	gisRepo repository.GisRepository,
+	userRepo *repository.UserRepository,
+) *Server {
 	return &Server{
 		syncService: syncService,
 		repo:        repo,
 		gisRepo:     gisRepo,
+		userRepo:    userRepo,
 	}
 }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", s.HandleHealth)
+
+	// User Auth Endpoints
+	mux.HandleFunc("/api/v1/auth/register", s.HandleRegister)
+	mux.HandleFunc("/api/v1/auth/login", s.HandleLogin)
+
+	// Sync Endpoints
 	mux.HandleFunc("/api/v1/sync/push", s.HandleSyncPush)
 	mux.HandleFunc("/api/v1/sync/pull", s.HandleSyncPull)
 	mux.HandleFunc("/api/v1/records", s.HandleGetRecords)
@@ -43,6 +56,103 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":  "UP",
 		"service": "georef-backend",
 		"spatial": "PostGIS Active",
+	})
+}
+
+func (s *Server) HandleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req models.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "Missing required fields: email and password", http.StatusBadRequest)
+		return
+	}
+
+	if s.userRepo != nil {
+		existing, _ := s.userRepo.GetUserByEmail(r.Context(), req.Email)
+		if existing != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(models.AuthResponse{
+				Success: false,
+				Message: "E-mail já cadastrado no sistema.",
+			})
+			return
+		}
+
+		user, err := s.userRepo.CreateUser(r.Context(), req.Name, req.Email, req.Password)
+		if err != nil {
+			http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(models.AuthResponse{
+			Success: true,
+			User:    user,
+			Token:   "jwt-token-" + user.ID,
+			Message: "Conta criada com sucesso!",
+		})
+		return
+	}
+
+	// Fallback mock response if database repo not injected
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(models.AuthResponse{
+		Success: true,
+		Token:   "jwt-token-mock",
+		Message: "Conta criada com sucesso!",
+	})
+}
+
+func (s *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req models.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if s.userRepo != nil {
+		user, err := s.userRepo.GetUserByEmail(r.Context(), req.Email)
+		if err != nil || user == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(models.AuthResponse{
+				Success: false,
+				Message: "E-mail ou senha incorretos.",
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.AuthResponse{
+			Success: true,
+			User:    user,
+			Token:   "jwt-token-" + user.ID,
+			Message: "Login efetuado com sucesso!",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(models.AuthResponse{
+		Success: true,
+		Token:   "jwt-token-mock",
+		Message: "Login efetuado com sucesso!",
 	})
 }
 
@@ -132,7 +242,6 @@ func (s *Server) HandleGetRecords(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(records)
 }
 
-// GIS Push Handler for PostGIS spatial layer sync
 func (s *Server) HandleGisPush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

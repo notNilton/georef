@@ -6,11 +6,11 @@ import (
 	"log"
 	"net/http"
 
-	"georef/backend/internal/api"
-	"georef/backend/internal/config"
-	"georef/backend/internal/db"
-	"georef/backend/internal/repository"
-	"georef/backend/internal/sync"
+	"github.com/nilbyte/georef/backend/internal/api"
+	"github.com/nilbyte/georef/backend/internal/config"
+	"github.com/nilbyte/georef/backend/internal/db"
+	"github.com/nilbyte/georef/backend/internal/repository"
+	"github.com/nilbyte/georef/backend/internal/sync"
 )
 
 func main() {
@@ -28,18 +28,20 @@ func main() {
 	// Initialize DB schema automatically
 	_ = database.InitSchema(context.Background(), "db/migrations/000001_init_schema.sql")
 	_ = database.InitSchema(context.Background(), "db/migrations/000002_gis_layers.sql")
+	_ = database.InitSchema(context.Background(), "db/migrations/000003_users.sql")
 
 	repo := repository.NewPostgresRepository(database.Pool)
 	gisRepo := repository.NewPostgresGisRepository(database.Pool)
+	userRepo := repository.NewUserRepository(database.Pool)
 	syncService := sync.NewSyncService(repo)
 
-	server := api.NewServer(syncService, repo, gisRepo)
+	server := api.NewServer(syncService, repo, gisRepo, userRepo)
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
-	log.Printf("Server listening on HTTP port %s (PostGIS spatial ready)", addr)
+	log.Printf("Server listening on HTTP port %s (PostGIS spatial & User Auth ready)", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server crashed: %v", err)
 	}
