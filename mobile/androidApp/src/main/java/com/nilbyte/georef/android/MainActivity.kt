@@ -22,15 +22,22 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,15 +46,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.nilbyte.georef.data.repository.AuthRepository
 import com.nilbyte.georef.domain.gis.GisAreaCalculator
 import com.nilbyte.georef.domain.model.GeoPoint
 import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
+import com.nilbyte.georef.domain.model.UserAccount
 import com.nilbyte.georef.sync.IdempotentSyncEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +105,7 @@ val TOPO_MAP_10M_FREE = object : OnlineTileSourceBase(
 
 class MainActivity : ComponentActivity() {
 
+    private val authRepository = AuthRepository()
     private val syncEngine by lazy {
         IdempotentSyncEngine(clientId = "android-field-" + UUID.randomUUID().toString().take(8))
     }
@@ -132,7 +145,20 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    GisMultiTabApp(syncEngine)
+                    val user by authRepository.currentUser.collectAsState()
+
+                    if (user == null) {
+                        LoginRegisterScreen(
+                            authRepository = authRepository,
+                            onLoginSuccess = { }
+                        )
+                    } else {
+                        GisMultiTabApp(
+                            syncEngine = syncEngine,
+                            currentUser = user!!,
+                            onLogout = { authRepository.logout() }
+                        )
+                    }
                 }
             }
         }
@@ -166,6 +192,189 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable
+fun LoginRegisterScreen(
+    authRepository: AuthRepository,
+    onLoginSuccess: () -> Unit
+) {
+    var isRegisterMode by remember { mutableStateOf(false) }
+    var nameInput by remember { mutableStateOf("") }
+    var emailInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
+    var isPasswordVisible by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val scope = rememberCoroutineScope()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            // Minimalist Logo & Title
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                modifier = Modifier.size(72.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("📍", fontSize = 36.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text("GeoRef Field", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Mapeamento & Gestão Geográfica Offline",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Auth Mode Selector Toggle (Entrar / Criar Conta)
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.padding(4.dp)) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (!isRegisterMode) MaterialTheme.colorScheme.surface else Color.Transparent,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { isRegisterMode = false }
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 10.dp)) {
+                            Text("Entrar", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isRegisterMode) MaterialTheme.colorScheme.surface else Color.Transparent,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { isRegisterMode = true }
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 10.dp)) {
+                            Text("Criar Conta", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (errorMessage != null) {
+                Text(
+                    text = errorMessage!!,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+
+            if (isRegisterMode) {
+                OutlinedTextField(
+                    value = nameInput,
+                    onValueChange = { nameInput = it; errorMessage = null },
+                    label = { Text("Nome Completo") },
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            OutlinedTextField(
+                value = emailInput,
+                onValueChange = { emailInput = it; errorMessage = null },
+                label = { Text("E-mail corporativo ou pessoal") },
+                leadingIcon = { Icon(Icons.Default.Mail, contentDescription = null) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = passwordInput,
+                onValueChange = { passwordInput = it; errorMessage = null },
+                label = { Text("Senha de Acesso") },
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                        Icon(
+                            if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = null
+                        )
+                    }
+                },
+                singleLine = true,
+                visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+                onClick = {
+                    scope.launch {
+                        val success = if (isRegisterMode) {
+                            authRepository.register(nameInput, emailInput, passwordInput)
+                        } else {
+                            authRepository.login(emailInput, passwordInput)
+                        }
+
+                        if (success) {
+                            onLoginSuccess()
+                        } else {
+                            errorMessage = "Preencha o e-mail e uma senha válida (mínimo 4 caracteres)."
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+            ) {
+                Text(
+                    text = if (isRegisterMode) "Cadastrar Conta" else "Acessar Conta",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            TextButton(
+                onClick = {
+                    authRepository.loginAsGuest()
+                    onLoginSuccess()
+                }
+            ) {
+                Text("Continuar em Modo Offline (Sem Login)", fontSize = 12.sp, color = Color.Gray)
+            }
+        }
+    }
+}
+
 enum class MapTileProviderMode {
     MAPNIK_VECTOR,
     ESRI_SATELLITE_FREE,
@@ -174,9 +383,14 @@ enum class MapTileProviderMode {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
+fun GisMultiTabApp(
+    syncEngine: IdempotentSyncEngine,
+    currentUser: UserAccount,
+    onLogout: () -> Unit
+) {
     var selectedScreen by remember { mutableIntStateOf(1) } // 0: Lista de Camadas, 1: Mapa Global
     var showRegisteredLayerPickerSheet by remember { mutableStateOf(false) }
+    var showUserAccountDialog by remember { mutableStateOf(false) }
     var navTargetPoint by remember { mutableStateOf<GeoPoint?>(null) }
     var navTargetName by remember { mutableStateOf<String?>(null) }
 
@@ -284,6 +498,8 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                 0 -> RegisteredLayersListScreen(
                     gisLayers = gisLayers,
                     activeLayers = activeGisLayers,
+                    currentUser = currentUser,
+                    onOpenUserAccount = { showUserAccountDialog = true },
                     onToggleActive = { id -> syncEngine.toggleLayerActive(id) },
                     onRemoveLayer = { id -> syncEngine.removeLayer(id) },
                     onImportNewLayerClick = {
@@ -302,8 +518,10 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     activeLayers = activeGisLayers,
                     customPins = customPins,
                     syncEngine = syncEngine,
+                    currentUser = currentUser,
                     navTargetPoint = navTargetPoint,
                     navTargetName = navTargetName,
+                    onOpenUserAccount = { showUserAccountDialog = true },
                     onClearNavigation = {
                         navTargetPoint = null
                         navTargetName = null
@@ -318,6 +536,38 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                                 Manifest.permission.ACCESS_COARSE_LOCATION
                             )
                         )
+                    }
+                )
+            }
+
+            if (showUserAccountDialog) {
+                AlertDialog(
+                    onDismissRequest = { showUserAccountDialog = false },
+                    title = { Text("Conta de Usuário", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Nome: ${currentUser.name}", fontWeight = FontWeight.SemiBold)
+                            Text("E-mail: ${currentUser.email}", fontSize = 12.sp, color = Color.Gray)
+                            Text("ID da Conta: ${currentUser.id}", fontSize = 11.sp, color = Color.Gray)
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                showUserAccountDialog = false
+                                onLogout()
+                            }
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.ExitToApp, contentDescription = null, tint = Color.Red)
+                                Text("Sair da Conta", color = Color.Red)
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showUserAccountDialog = false }) {
+                            Text("Fechar")
+                        }
                     }
                 )
             }
@@ -419,6 +669,8 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
 fun RegisteredLayersListScreen(
     gisLayers: List<GisLayer>,
     activeLayers: List<GisLayer>,
+    currentUser: UserAccount,
+    onOpenUserAccount: () -> Unit,
     onToggleActive: (String) -> Unit,
     onRemoveLayer: (String) -> Unit,
     onImportNewLayerClick: () -> Unit,
@@ -437,7 +689,28 @@ fun RegisteredLayersListScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Camadas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable { onOpenUserAccount() }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = currentUser.name.take(1).uppercase(),
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+                Column {
+                    Text("Camadas", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(currentUser.email, fontSize = 10.sp, color = Color.Gray)
+                }
+            }
 
             Button(
                 onClick = onImportNewLayerClick,
@@ -476,8 +749,10 @@ fun WorldMapScreen(
     activeLayers: List<GisLayer>,
     customPins: List<GeorefRecord>,
     syncEngine: IdempotentSyncEngine,
+    currentUser: UserAccount,
     navTargetPoint: GeoPoint?,
     navTargetName: String?,
+    onOpenUserAccount: () -> Unit,
     onClearNavigation: () -> Unit,
     onOpenLayerToggleList: () -> Unit,
     onRequestLocationPermission: () -> Unit
@@ -576,6 +851,25 @@ fun WorldMapScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // User Profile Initial Avatar Button
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clickable { onOpenUserAccount() }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = currentUser.name.take(1).uppercase(),
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
