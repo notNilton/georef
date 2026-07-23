@@ -3,12 +3,13 @@ package com.nilbyte.georef.domain.gis
 import com.nilbyte.georef.domain.model.GeoPoint
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * High-precision WGS84 Geodesic Area and Distance Calculator for Agricultural & Field GIS.
+ * High-precision WGS84 Geodesic Area, Distance, and Azimuth Calculator for Agricultural & Field GIS.
  */
 object GisAreaCalculator {
 
@@ -77,7 +78,58 @@ object GisAreaCalculator {
         val a = sin(dLat / 2.0) * sin(dLat / 2.0) +
                 sin(dLng / 2.0) * sin(dLng / 2.0) * cos(lat1) * cos(lat2)
 
-        val c = 2.0 * kotlin.math.atan2(sqrt(a), sqrt(1.0 - a))
+        val c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a))
         return EARTH_RADIUS_METERS * c
+    }
+
+    /**
+     * Calculates initial bearing/azimuth angle in degrees (0° to 360°) from p1 to p2.
+     */
+    fun calculateAzimuthDegrees(p1: GeoPoint, p2: GeoPoint): Double {
+        val lat1 = p1.latitude * (PI / 180.0)
+        val lat2 = p2.latitude * (PI / 180.0)
+        val dLng = (p2.longitude - p1.longitude) * (PI / 180.0)
+
+        val y = sin(dLng) * cos(lat2)
+        val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLng)
+
+        var brng = atan2(y, x) * (180.0 / PI)
+        brng = (brng + 360.0) % 360.0
+        return brng
+    }
+
+    /**
+     * Exports layer data into standard GeoJSON string for sharing via WhatsApp / Email / File.
+     */
+    fun exportLayerToGeoJson(layer: GisLayer): String {
+        val coordsArray = layer.polygonCoordinates.joinToString(",") {
+            "[${it.longitude},${it.latitude}]"
+        }
+        val areaHa = calculateAreaHectares(layer.polygonCoordinates)
+        val perimKm = calculatePerimeterKm(layer.polygonCoordinates)
+
+        return """
+        {
+          "type": "FeatureCollection",
+          "properties": {
+            "name": "${layer.name}",
+            "file_type": "${layer.fileType}",
+            "area_ha": ${String.format("%.2f", areaHa).replace(",", ".")},
+            "perimeter_km": ${String.format("%.2f", perimKm).replace(",", ".")}
+          },
+          "features": [
+            {
+              "type": "Feature",
+              "geometry": {
+                "type": "Polygon",
+                "coordinates": [[$coordsArray]]
+              },
+              "properties": {
+                "name": "${layer.name}"
+              }
+            }
+          ]
+        }
+        """.trimIndent()
     }
 }

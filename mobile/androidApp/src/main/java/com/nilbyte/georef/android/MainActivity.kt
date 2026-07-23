@@ -28,6 +28,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.nilbyte.georef.domain.gis.GisAreaCalculator
+import com.nilbyte.georef.domain.model.GeoPoint
 import com.nilbyte.georef.domain.model.GeorefRecord
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
@@ -60,6 +64,7 @@ import org.osmdroid.views.MapView as OsmMapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker as OsmMarker
 import org.osmdroid.views.overlay.Polygon as OsmPolygon
+import org.osmdroid.views.overlay.Polyline as OsmPolyline
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
@@ -95,8 +100,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Enable automatic SQLite offline tile caching (100% free offline maps)
         Configuration.getInstance().load(applicationContext, applicationContext.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
         Configuration.getInstance().userAgentValue = packageName
+        Configuration.getInstance().tileFileSystemCacheMaxBytes = 1024L * 1024L * 1024L // 1GB offline map cache
 
         handleIncomingFileIntent(intent)
 
@@ -170,6 +177,8 @@ enum class MapTileProviderMode {
 fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
     var selectedScreen by remember { mutableIntStateOf(1) } // 0: Lista de Camadas, 1: Mapa Global
     var showRegisteredLayerPickerSheet by remember { mutableStateOf(false) }
+    var navTargetPoint by remember { mutableStateOf<GeoPoint?>(null) }
+    var navTargetName by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -280,14 +289,25 @@ fun GisMultiTabApp(syncEngine: IdempotentSyncEngine) {
                     onImportNewLayerClick = {
                         genericGisPickerLauncher.launch("*/*")
                     },
-                    onSelectLayer = { _ ->
+                    onSelectLayer = { layer ->
+                        navTargetPoint = GeoPoint(layer.centerLat, layer.centerLng)
+                        navTargetName = layer.name
                         selectedScreen = 1
+                    },
+                    onShareLayer = { layer ->
+                        shareLayerReport(context, layer)
                     }
                 )
                 1 -> WorldMapScreen(
                     activeLayers = activeGisLayers,
                     customPins = customPins,
                     syncEngine = syncEngine,
+                    navTargetPoint = navTargetPoint,
+                    navTargetName = navTargetName,
+                    onClearNavigation = {
+                        navTargetPoint = null
+                        navTargetName = null
+                    },
                     onOpenLayerToggleList = {
                         showRegisteredLayerPickerSheet = true
                     },
@@ -402,7 +422,8 @@ fun RegisteredLayersListScreen(
     onToggleActive: (String) -> Unit,
     onRemoveLayer: (String) -> Unit,
     onImportNewLayerClick: () -> Unit,
-    onSelectLayer: (GisLayer) -> Unit
+    onSelectLayer: (GisLayer) -> Unit,
+    onShareLayer: (GisLayer) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -441,7 +462,8 @@ fun RegisteredLayersListScreen(
                         isOverlayOn = isOverlayOn,
                         onToggle = { onToggleActive(layer.id) },
                         onRemove = { onRemoveLayer(layer.id) },
-                        onClick = { onSelectLayer(layer) }
+                        onClick = { onSelectLayer(layer) },
+                        onShare = { onShareLayer(layer) }
                     )
                 }
             }
@@ -454,6 +476,9 @@ fun WorldMapScreen(
     activeLayers: List<GisLayer>,
     customPins: List<GeorefRecord>,
     syncEngine: IdempotentSyncEngine,
+    navTargetPoint: GeoPoint?,
+    navTargetName: String?,
+    onClearNavigation: () -> Unit,
     onOpenLayerToggleList: () -> Unit,
     onRequestLocationPermission: () -> Unit
 ) {
@@ -461,10 +486,16 @@ fun WorldMapScreen(
     var tileProviderMode by remember { mutableStateOf(MapTileProviderMode.ESRI_SATELLITE_FREE) }
     var triggerFocusLocationSignal by remember { mutableLongStateOf(0L) }
 
+    var isMeasuringMode by remember { mutableStateOf(false) }
+    val measurementPoints = remember { mutableStateListOf<OsmGeoPoint>() }
+
     var editingPinRecord by remember { mutableStateOf<GeorefRecord?>(null) }
     var pinNameInput by remember { mutableStateOf("") }
     var pinLatInput by remember { mutableStateOf("") }
     var pinLngInput by remember { mutableStateOf("") }
+
+    var liveDistanceMeters by remember { mutableDoubleStateOf(0.0) }
+    var liveAzimuthDegrees by remember { mutableDoubleStateOf(0.0) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         NativeOsmMapView(
@@ -472,26 +503,38 @@ fun WorldMapScreen(
             customPins = customPins,
             tileProviderMode = tileProviderMode,
             triggerFocusLocationSignal = triggerFocusLocationSignal,
+            isMeasuringMode = isMeasuringMode,
+            measurementPoints = measurementPoints,
+            navTargetPoint = navTargetPoint,
+            onUpdateLiveNav = { dist, az ->
+                liveDistanceMeters = dist
+                liveAzimuthDegrees = az
+            },
+            onMapClickAddMeasurement = { pt ->
+                measurementPoints.add(pt)
+            },
             onLongPressCreatePin = { lat, lng ->
-                val newId = UUID.randomUUID().toString()
-                val newRecord = GeorefRecord(
-                    id = newId,
-                    clientId = syncEngine.clientId,
-                    name = "Ponto #${customPins.size + 1}",
-                    description = "Criado via toque no mapa",
-                    latitude = lat,
-                    longitude = lng,
-                    elevation = 0.0,
-                    accuracy = 0.0,
-                    clientUpdatedAt = System.currentTimeMillis(),
-                    serverUpdatedAt = 0L,
-                    version = 1,
-                    isDeleted = false
-                )
-                editingPinRecord = newRecord
-                pinNameInput = newRecord.name
-                pinLatInput = String.format("%.6f", lat).replace(",", ".")
-                pinLngInput = String.format("%.6f", lng).replace(",", ".")
+                if (!isMeasuringMode) {
+                    val newId = UUID.randomUUID().toString()
+                    val newRecord = GeorefRecord(
+                        id = newId,
+                        clientId = syncEngine.clientId,
+                        name = "Ponto #${customPins.size + 1}",
+                        description = "Criado via toque no mapa",
+                        latitude = lat,
+                        longitude = lng,
+                        elevation = 0.0,
+                        accuracy = 0.0,
+                        clientUpdatedAt = System.currentTimeMillis(),
+                        serverUpdatedAt = 0L,
+                        version = 1,
+                        isDeleted = false
+                    )
+                    editingPinRecord = newRecord
+                    pinNameInput = newRecord.name
+                    pinLatInput = String.format("%.6f", lat).replace(",", ".")
+                    pinLngInput = String.format("%.6f", lng).replace(",", ".")
+                }
             },
             onSelectPinRecord = { record ->
                 editingPinRecord = record
@@ -558,6 +601,26 @@ fun WorldMapScreen(
                     )
                 }
 
+                // Ruler / Measurement Mode Button
+                Surface(
+                    shape = CircleShape,
+                    color = if (isMeasuringMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clickable {
+                            isMeasuringMode = !isMeasuringMode
+                            if (!isMeasuringMode) measurementPoints.clear()
+                        }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "📏",
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
@@ -576,6 +639,86 @@ fun WorldMapScreen(
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )
+                    }
+                }
+            }
+        }
+
+        // Active Navigation Line Banner
+        navTargetPoint?.let {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 70.dp, start = 16.dp, end = 16.dp)
+                    .fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Navigation, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Column {
+                            Text(navTargetName ?: "Navegação GPS", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            val distText = if (liveDistanceMeters > 1000) String.format("%.2f km", liveDistanceMeters / 1000) else "${liveDistanceMeters.toInt()} m"
+                            Text("Distância: $distText | Azimute: ${liveAzimuthDegrees.toInt()}°", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    IconButton(onClick = onClearNavigation) {
+                        Icon(Icons.Default.Close, contentDescription = null)
+                    }
+                }
+            }
+        }
+
+        // Active Ruler Measurement Banner
+        if (isMeasuringMode) {
+            val calcCoords = measurementPoints.map { GeoPoint(it.latitude, it.longitude) }
+            val perimKm = GisAreaCalculator.calculatePerimeterKm(calcCoords)
+            val areaHa = GisAreaCalculator.calculateAreaHectares(calcCoords)
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 80.dp, start = 16.dp, end = 16.dp)
+                    .fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("📏 Régua de Medição (${measurementPoints.size} pontos)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        val distText = if (perimKm >= 1.0) String.format("%.2f km", perimKm) else "${(perimKm * 1000).toInt()} m"
+                        Text(
+                            text = if (areaHa > 0) "Distância: $distText | Área: ${String.format("%.2f", areaHa)} ha" else "Distância: $distText",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(onClick = { measurementPoints.clear() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.Gray)
+                        }
+                        IconButton(onClick = {
+                            isMeasuringMode = false
+                            measurementPoints.clear()
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = null, tint = Color.Red)
+                        }
                     }
                 }
             }
@@ -643,6 +786,11 @@ fun NativeOsmMapView(
     customPins: List<GeorefRecord>,
     tileProviderMode: MapTileProviderMode,
     triggerFocusLocationSignal: Long,
+    isMeasuringMode: Boolean,
+    measurementPoints: List<OsmGeoPoint>,
+    navTargetPoint: GeoPoint?,
+    onUpdateLiveNav: (Double, Double) -> Unit,
+    onMapClickAddMeasurement: (OsmGeoPoint) -> Unit,
     onLongPressCreatePin: (Double, Double) -> Unit,
     onSelectPinRecord: (GeorefRecord) -> Unit
 ) {
@@ -677,7 +825,13 @@ fun NativeOsmMapView(
                 controller.setCenter(OsmGeoPoint(targetLat, targetLng))
 
                 val eventsReceiver = object : MapEventsReceiver {
-                    override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean = false
+                    override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean {
+                        if (isMeasuringMode && p != null) {
+                            onMapClickAddMeasurement(p)
+                            return true
+                        }
+                        return false
+                    }
                     override fun longPressHelper(p: OsmGeoPoint?): Boolean {
                         p?.let {
                             onLongPressCreatePin(it.latitude, it.longitude)
@@ -715,7 +869,13 @@ fun NativeOsmMapView(
 
             mapView.overlays.clear()
             val eventsReceiver = object : MapEventsReceiver {
-                override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean = false
+                override fun singleTapConfirmedHelper(p: OsmGeoPoint?): Boolean {
+                    if (isMeasuringMode && p != null) {
+                        onMapClickAddMeasurement(p)
+                        return true
+                    }
+                    return false
+                }
                 override fun longPressHelper(p: OsmGeoPoint?): Boolean {
                     p?.let {
                         onLongPressCreatePin(it.latitude, it.longitude)
@@ -742,8 +902,43 @@ fun NativeOsmMapView(
                         }
                     }
                 }
-            } else if (activeLayers.isNotEmpty()) {
+            } else if (activeLayers.isNotEmpty() && navTargetPoint == null) {
                 mapView.controller.setCenter(OsmGeoPoint(targetLat, targetLng))
+            }
+
+            // Draw GPS Navigation Line Overlay
+            navTargetPoint?.let { dest ->
+                val myLoc = locationOverlay.myLocation
+                if (myLoc != null) {
+                    val p1 = GeoPoint(myLoc.latitude, myLoc.longitude)
+                    val p2 = dest
+                    val dist = GisAreaCalculator.distanceMeters(p1, p2)
+                    val az = GisAreaCalculator.calculateAzimuthDegrees(p1, p2)
+                    onUpdateLiveNav(dist, az)
+
+                    val navLine = OsmPolyline(mapView)
+                    navLine.outlinePaint.color = android.graphics.Color.parseColor("#00E5FF")
+                    navLine.outlinePaint.strokeWidth = 8f
+                    navLine.setPoints(listOf(myLoc, OsmGeoPoint(dest.latitude, dest.longitude)))
+                    mapView.overlays.add(navLine)
+                }
+            }
+
+            // Draw Active Ruler Measurement Lines & Markers
+            if (measurementPoints.isNotEmpty()) {
+                val measurePolyline = OsmPolyline(mapView)
+                measurePolyline.outlinePaint.color = android.graphics.Color.parseColor("#FFD600")
+                measurePolyline.outlinePaint.strokeWidth = 6f
+                measurePolyline.setPoints(measurementPoints)
+                mapView.overlays.add(measurePolyline)
+
+                measurementPoints.forEachIndexed { idx, pt ->
+                    val mMarker = OsmMarker(mapView)
+                    mMarker.position = pt
+                    mMarker.title = "Ponto #${idx + 1}"
+                    mMarker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_CENTER)
+                    mapView.overlays.add(mMarker)
+                }
             }
 
             activeLayers.forEachIndexed { index, layer ->
@@ -807,6 +1002,16 @@ fun NativeOsmMapView(
     )
 }
 
+private fun shareLayerReport(context: Context, layer: GisLayer) {
+    val geoJsonStr = GisAreaCalculator.exportLayerToGeoJson(layer)
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, "Relatório GIS GeoRef - ${layer.name}")
+        putExtra(Intent.EXTRA_TEXT, geoJsonStr)
+    }
+    context.startActivity(Intent.createChooser(shareIntent, "Compartilhar Relatório GeoJSON"))
+}
+
 private fun readBytesFromUri(context: Context, uri: Uri): ByteArray? {
     return try {
         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -835,7 +1040,8 @@ fun GisLayerItemCard(
     isOverlayOn: Boolean,
     onToggle: () -> Unit,
     onRemove: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onShare: () -> Unit
 ) {
     val areaHa = GisAreaCalculator.calculateAreaHectares(layer.polygonCoordinates)
     val perimKm = GisAreaCalculator.calculatePerimeterKm(layer.polygonCoordinates)
@@ -879,6 +1085,9 @@ fun GisLayerItemCard(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onShare) {
+                    Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                }
                 Switch(
                     checked = isOverlayOn,
                     onCheckedChange = { onToggle() }
