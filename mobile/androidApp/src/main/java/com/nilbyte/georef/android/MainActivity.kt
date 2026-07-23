@@ -25,8 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
@@ -57,8 +59,10 @@ import com.nilbyte.georef.data.repository.AuthRepository
 import com.nilbyte.georef.domain.gis.GisAreaCalculator
 import com.nilbyte.georef.domain.model.GeoPoint
 import com.nilbyte.georef.domain.model.GeorefRecord
+import com.nilbyte.georef.domain.model.GisFeature
 import com.nilbyte.georef.domain.model.GisFileType
 import com.nilbyte.georef.domain.model.GisLayer
+import com.nilbyte.georef.domain.model.SyncStatus
 import com.nilbyte.georef.domain.model.UserAccount
 import com.nilbyte.georef.sync.IdempotentSyncEngine
 import kotlinx.coroutines.CoroutineScope
@@ -113,7 +117,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Enable automatic SQLite offline tile caching (100% free offline maps)
         Configuration.getInstance().load(applicationContext, applicationContext.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
         Configuration.getInstance().userAgentValue = packageName
         Configuration.getInstance().tileFileSystemCacheMaxBytes = 1024L * 1024L * 1024L // 1GB offline map cache
@@ -219,7 +222,6 @@ fun LoginRegisterScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Minimalist Logo & Title
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
@@ -241,7 +243,6 @@ fun LoginRegisterScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Auth Mode Selector Toggle (Entrar / Criar Conta)
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceVariant,
@@ -677,6 +678,9 @@ fun RegisteredLayersListScreen(
     onSelectLayer: (GisLayer) -> Unit,
     onShareLayer: (GisLayer) -> Unit
 ) {
+    val totalAreaHectares = gisLayers.sumOf { GisAreaCalculator.calculateAreaHectares(it.polygonCoordinates) }
+    val totalPerimeterKm = gisLayers.sumOf { GisAreaCalculator.calculatePerimeterKm(it.polygonCoordinates) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -722,6 +726,42 @@ fun RegisteredLayersListScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Total Farm Area Dashboard Banner
+        if (gisLayers.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Área Total Mapeada", fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = String.format("%.2f ha", totalAreaHectares),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("Talhões / Camadas", fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "${gisLayers.size} Áreas (${String.format("%.1f", totalPerimeterKm)} km)",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
         if (gisLayers.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Nenhuma camada cadastrada", fontSize = 14.sp, color = Color.Gray)
@@ -762,12 +802,16 @@ fun WorldMapScreen(
     var triggerFocusLocationSignal by remember { mutableLongStateOf(0L) }
 
     var isMeasuringMode by remember { mutableStateOf(false) }
-    val measurementPoints = remember { mutableStateListOf<OsmGeoPoint>() }
+    var isDrawTalhaoMode by remember { mutableStateOf(false) }
+    val mapPointsList = remember { mutableStateListOf<OsmGeoPoint>() }
 
     var editingPinRecord by remember { mutableStateOf<GeorefRecord?>(null) }
     var pinNameInput by remember { mutableStateOf("") }
     var pinLatInput by remember { mutableStateOf("") }
     var pinLngInput by remember { mutableStateOf("") }
+
+    var showSaveTalhaoDialog by remember { mutableStateOf(false) }
+    var newTalhaoNameInput by remember { mutableStateOf("") }
 
     var liveDistanceMeters by remember { mutableDoubleStateOf(0.0) }
     var liveAzimuthDegrees by remember { mutableDoubleStateOf(0.0) }
@@ -778,18 +822,18 @@ fun WorldMapScreen(
             customPins = customPins,
             tileProviderMode = tileProviderMode,
             triggerFocusLocationSignal = triggerFocusLocationSignal,
-            isMeasuringMode = isMeasuringMode,
-            measurementPoints = measurementPoints,
+            isMeasuringMode = isMeasuringMode || isDrawTalhaoMode,
+            measurementPoints = mapPointsList,
             navTargetPoint = navTargetPoint,
             onUpdateLiveNav = { dist, az ->
                 liveDistanceMeters = dist
                 liveAzimuthDegrees = az
             },
             onMapClickAddMeasurement = { pt ->
-                measurementPoints.add(pt)
+                mapPointsList.add(pt)
             },
             onLongPressCreatePin = { lat, lng ->
-                if (!isMeasuringMode) {
+                if (!isMeasuringMode && !isDrawTalhaoMode) {
                     val newId = UUID.randomUUID().toString()
                     val newRecord = GeorefRecord(
                         id = newId,
@@ -851,7 +895,6 @@ fun WorldMapScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // User Profile Initial Avatar Button
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.primary,
@@ -895,7 +938,7 @@ fun WorldMapScreen(
                     )
                 }
 
-                // Ruler / Measurement Mode Button
+                // Ruler Button
                 Surface(
                     shape = CircleShape,
                     color = if (isMeasuringMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
@@ -904,14 +947,30 @@ fun WorldMapScreen(
                         .size(40.dp)
                         .clickable {
                             isMeasuringMode = !isMeasuringMode
-                            if (!isMeasuringMode) measurementPoints.clear()
+                            isDrawTalhaoMode = false
+                            if (!isMeasuringMode) mapPointsList.clear()
                         }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "📏",
-                            fontSize = 18.sp
-                        )
+                        Text("📏", fontSize = 18.sp)
+                    }
+                }
+
+                // Draw Polygon Button (Desenhar Talhão)
+                Surface(
+                    shape = CircleShape,
+                    color = if (isDrawTalhaoMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clickable {
+                            isDrawTalhaoMode = !isDrawTalhaoMode
+                            isMeasuringMode = false
+                            if (!isDrawTalhaoMode) mapPointsList.clear()
+                        }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("✍️", fontSize = 18.sp)
                     }
                 }
 
@@ -936,6 +995,127 @@ fun WorldMapScreen(
                     }
                 }
             }
+        }
+
+        // Active Draw Talhao Banner
+        if (isDrawTalhaoMode) {
+            val calcCoords = mapPointsList.map { GeoPoint(it.latitude, it.longitude) }
+            val areaHa = GisAreaCalculator.calculateAreaHectares(calcCoords)
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 80.dp, start = 16.dp, end = 16.dp)
+                    .fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("✍️ Desenhar Novo Talhão (${mapPointsList.size} vértices)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            text = "Área Calculada: ${String.format("%.2f", areaHa)} ha",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (mapPointsList.size >= 3) {
+                            Button(
+                                onClick = {
+                                    newTalhaoNameInput = "Talhão Novo #${activeLayers.size + 1}"
+                                    showSaveTalhaoDialog = true
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = Color.Black)
+                                Text("Salvar", color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        IconButton(onClick = {
+                            isDrawTalhaoMode = false
+                            mapPointsList.clear()
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = null, tint = Color.Red)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showSaveTalhaoDialog) {
+            AlertDialog(
+                onDismissRequest = { showSaveTalhaoDialog = false },
+                title = { Text("Salvar Novo Talhão", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = newTalhaoNameInput,
+                            onValueChange = { newTalhaoNameInput = it },
+                            label = { Text("Nome do Talhão") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        val calcCoords = mapPointsList.map { GeoPoint(it.latitude, it.longitude) }
+                        val areaHa = GisAreaCalculator.calculateAreaHectares(calcCoords)
+                        Text("Área: ${String.format("%.2f", areaHa)} ha", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                val coords = mapPointsList.map { GeoPoint(it.latitude, it.longitude) }
+                                val minLat = coords.minOf { it.latitude }
+                                val maxLat = coords.maxOf { it.latitude }
+                                val minLng = coords.minOf { it.longitude }
+                                val maxLng = coords.maxOf { it.longitude }
+
+                                val newLayer = GisLayer(
+                                    id = "talhao-manual-" + UUID.randomUUID().toString().take(8),
+                                    clientId = syncEngine.clientId,
+                                    name = newTalhaoNameInput.ifBlank { "Talhão Desenhado" },
+                                    fileType = GisFileType.GEOJSON,
+                                    minLat = minLat,
+                                    minLng = minLng,
+                                    maxLat = maxLat,
+                                    maxLng = maxLng,
+                                    centerLat = (minLat + maxLat) / 2.0,
+                                    centerLng = (minLng + maxLng) / 2.0,
+                                    features = listOf(GisFeature("f1", newTalhaoNameInput, "POLYGON", GeoPoint((minLat + maxLat)/2.0, (minLng + maxLng)/2.0), coords)),
+                                    polygonCoordinates = coords,
+                                    polygonParts = listOf(coords),
+                                    clientUpdatedAt = System.currentTimeMillis(),
+                                    serverUpdatedAt = 0L,
+                                    version = 1,
+                                    isDeleted = false,
+                                    syncStatus = SyncStatus.PENDING_CREATE
+                                )
+
+                                syncEngine.gisLocalDatabase.saveOrUpdateLayer(newLayer, isPendingSync = true)
+                                isDrawTalhaoMode = false
+                                mapPointsList.clear()
+                                showSaveTalhaoDialog = false
+                            }
+                        }
+                    ) {
+                        Text("Salvar Camada")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSaveTalhaoDialog = false }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
         }
 
         // Active Navigation Line Banner
@@ -973,7 +1153,7 @@ fun WorldMapScreen(
 
         // Active Ruler Measurement Banner
         if (isMeasuringMode) {
-            val calcCoords = measurementPoints.map { GeoPoint(it.latitude, it.longitude) }
+            val calcCoords = mapPointsList.map { GeoPoint(it.latitude, it.longitude) }
             val perimKm = GisAreaCalculator.calculatePerimeterKm(calcCoords)
             val areaHa = GisAreaCalculator.calculateAreaHectares(calcCoords)
 
@@ -994,7 +1174,7 @@ fun WorldMapScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("📏 Régua de Medição (${measurementPoints.size} pontos)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("📏 Régua de Medição (${mapPointsList.size} pontos)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         val distText = if (perimKm >= 1.0) String.format("%.2f km", perimKm) else "${(perimKm * 1000).toInt()} m"
                         Text(
                             text = if (areaHa > 0) "Distância: $distText | Área: ${String.format("%.2f", areaHa)} ha" else "Distância: $distText",
@@ -1004,12 +1184,12 @@ fun WorldMapScreen(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        IconButton(onClick = { measurementPoints.clear() }) {
+                        IconButton(onClick = { mapPointsList.clear() }) {
                             Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.Gray)
                         }
                         IconButton(onClick = {
                             isMeasuringMode = false
-                            measurementPoints.clear()
+                            mapPointsList.clear()
                         }) {
                             Icon(Icons.Default.Close, contentDescription = null, tint = Color.Red)
                         }
@@ -1218,7 +1398,7 @@ fun NativeOsmMapView(
                 }
             }
 
-            // Draw Active Ruler Measurement Lines & Markers
+            // Draw Active Measurement / Polygon Creation Lines & Markers
             if (measurementPoints.isNotEmpty()) {
                 val measurePolyline = OsmPolyline(mapView)
                 measurePolyline.outlinePaint.color = android.graphics.Color.parseColor("#FFD600")
@@ -1229,7 +1409,7 @@ fun NativeOsmMapView(
                 measurementPoints.forEachIndexed { idx, pt ->
                     val mMarker = OsmMarker(mapView)
                     mMarker.position = pt
-                    mMarker.title = "Ponto #${idx + 1}"
+                    mMarker.title = "Vértice #${idx + 1}"
                     mMarker.setAnchor(OsmMarker.ANCHOR_CENTER, OsmMarker.ANCHOR_CENTER)
                     mapView.overlays.add(mMarker)
                 }
