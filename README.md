@@ -17,6 +17,12 @@ Makefile              Task automation
 - `backend`: Go REST API serving spatial points, geometry processing, and database persistence.
 - `mobile`: Mobile client for field data capture, GPS recording, and map visualization.
 
+## Documentation
+
+- [📋 Roadmap & TODOs](docs/TODO.md) - Planned features and project roadmap
+- [📐 Architecture & Sync Protocol](docs/ARCHITECTURE_SYNC.md) - Offline-first architecture and GeoPDF processing details
+- [🚀 Publishing Guide](PUBLISHING.md) - Step-by-step guide for App Store & Google Play release
+
 ## Development
 
 ### Prerequisites
