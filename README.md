@@ -7,7 +7,7 @@ Georeferencing application and backend service for spatial data collection and m
 ```
 backend/              Go API server with spatial geometry processing
 mobile/               React Native mobile application for field collection
-docs/                 Technical documentation and API specifications
+docs/                 Technical documentation, architecture sync, and TODO roadmap
 docker-compose.yml     Docker orchestration
 Makefile              Task automation
 ```
