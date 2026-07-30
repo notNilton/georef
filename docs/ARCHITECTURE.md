@@ -1,3 +1,5 @@
-# 📐 Georef Architecture
+# 📐 GeoRef Architecture & System Design
 
-Documentação de arquitetura do repositório georef.
+Georeferencing application and backend service for spatial data collection and mapping.
+
+

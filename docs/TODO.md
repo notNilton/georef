@@ -1,39 +1,37 @@
 # 📋 GeoRef Roadmap & TODOs
 
-Este documento descreve o plano de melhorias e tarefas pendentes (TODOs) para o ecossistema **GeoRef** (Backend Go + Mobile Kotlin Multiplatform).
+Roadmap and pending tasks for the **GeoRef** ecosystem (Go Backend + Kotlin Multiplatform Mobile).
 
 ---
 
-## ⚙️ 1. Backend & Engenharia GIS (Go + PostGIS)
-
-- [ ] **Suporte a Múltiplos Formatos Geoespaciais**
-  - Implementar endpoints no backend Go para exportação e importação de **GeoJSON**, **KML**, **Shapefile (.shp)** e **GeoPackage (.gpkg)**.
-- [ ] **Validação Topológica de Geometrias**
-  - Integrar rotinas de validação PostGIS (`ST_IsValid`, `ST_MakeValid`) no fluxo de salvamento de feições para evitar geometrias inválidas.
-- [ ] **Suporte e Reprojeção de CRS / SRID**
-  - Adicionar reprojeção automática entre **EPSG:4326** (WGS 84) e sistemas projetados locais/UTM (ex: **EPSG:31983** - SIRGAS 2000 UTM Zone 23S).
-- [ ] **Documentação OpenAPI / Swagger**
-  - Configurar geração automática de especificação OpenAPI (Swagger) no backend em Go para integrar com ferramentas GIS externas (QGIS, ArcGIS).
-
----
-
-## 📱 2. Mobile & Experiência no Campo (Kotlin Multiplatform / React Native)
-
-- [ ] **Fila de Sincronização Offline-First Robusta**
-  - Aprimorar o motor de sincronização com suporte a fila persistente (`Queue Sync`) e resolução configurável de conflitos ao reconectar à internet.
-- [ ] **Gerenciamento Avançado de Cache de Mapas (Tiles)**
-  - Adicionar visualização de progresso e estimativa de tamanho em MB para o download de tiles offline de uma região geográfica.
-- [ ] **Captura de Mídia Georreferenciada**
-  - Implementar captura de fotos com gravação automática de coordenadas GPS e azimute/direção nos metadados EXIF.
-- [ ] **Média de Coordenadas GPS (Amostragem de Sinal)**
-  - Adicionar modo de alta precisão no campo que coleta múltiplas amostras de sinal GPS durante um intervalo de tempo e calcula a coordenada média ajustada pela acurácia.
+## ⚙️ 1. Backend & GIS Engineering (Go + PostGIS)
+- [ ] **Support for Multiple Geospatial Formats**
+  - Add endpoints in Go for exporting and importing **GeoJSON**, **KML**, **Shapefile (.shp)**, and **GeoPackage (.gpkg)**.
+- [ ] **Topological Geometry Validation**
+  - Integrate PostGIS routines (, ) into feature saving workflows to prevent invalid geometries.
+- [ ] **CRS / SRID Reprojection**
+  - Add automatic reprojection between **EPSG:4326** (WGS 84) and local projected UTM systems (e.g., **EPSG:31983** - SIRGAS 2000 UTM Zone 23S).
+- [ ] **OpenAPI / Swagger Documentation**
+  - Configure automatic OpenAPI spec generation in Go to integrate with external GIS software (QGIS, ArcGIS).
 
 ---
 
-## 🚀 3. CI/CD & Deploy
+## 📱 2. Mobile & Field Experience (Kotlin Multiplatform / React Native)
+- [ ] **Robust Offline-First Sync Queue**
+  - Enhance sync engine with persistent queue support () and configurable conflict resolution upon reconnecting.
+- [ ] **Advanced Map Tile Caching**
+  - Add download progress tracking and estimated MB size for offline tile caching of a geographic region.
+- [ ] **Georeferenced Media Capture**
+  - Implement photo capture with automatic GPS coordinate and compass azimuth metadata embedded in EXIF.
+- [ ] **GPS Sampling & Coordinate Averaging**
+  - Add high-precision field mode that samples multiple GPS points over a time window to calculate accuracy-weighted average coordinates.
 
-- [ ] **Pipeline de CI/CD via GitHub Actions**
-  - Configurar workflow para execução de testes automatizados do backend Go (`go test ./...`) e validação da build do Docker image.
-  - Configurar workflow para compilação automatizada dos artefatos mobile: Android App Bundle (`.aab`) e iOS Framework (`XCFramework`).
-- [ ] **Política de Privacidade & Termos**
-  - Criar documento de Política de Privacidade de Dados Geográficos exigido para submissão no Google Play Console e Apple App Store Connect.
+---
+
+## 🚀 3. CI/CD & Deployment
+- [ ] **GitHub Actions CI/CD Pipeline**
+  - Configure workflows for Go backend tests (FAIL	./... [setup failed]
+FAIL) and Docker build validations.
+  - Configure workflows for automated mobile artifact builds: Android App Bundle () and iOS Framework ().
+- [ ] **Privacy Policy & Terms**
+  - Create GIS Data Privacy Policy document required for Google Play Console and Apple App Store Connect submissions.
