@@ -1,4 +1,4 @@
-module georef/backend
+module github.com/nilbyte/georef/backend
 
 go 1.26
 

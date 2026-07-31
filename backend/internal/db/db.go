@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"georef/backend/internal/config"
+	"github.com/nilbyte/georef/backend/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/nilbyte/georef/backend/internal/exportimport"
 	"github.com/nilbyte/georef/backend/internal/models"
 	"github.com/nilbyte/georef/backend/internal/repository"
 	"github.com/nilbyte/georef/backend/internal/sync"
@@ -48,6 +49,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/gis/sync/push", s.HandleGisPush)
 	mux.HandleFunc("/api/v1/gis/layers", s.HandleGetGisLayers)
 	mux.HandleFunc("/api/v1/gis/intersects", s.HandleGisIntersects)
+	mux.HandleFunc("/api/v1/gis/export/geojson", s.HandleExportGeoJSON)
+	mux.HandleFunc("/api/v1/gis/export/kml", s.HandleExportKML)
 }
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
@@ -324,4 +327,36 @@ func (s *Server) HandleGisIntersects(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(layers)
+}
+
+func (s *Server) HandleExportGeoJSON(w http.ResponseWriter, r *http.Request) {
+	layers, err := s.gisRepo.GetAllGisLayers(r.Context(), 500)
+	if err != nil {
+		http.Error(w, "Error fetching layers: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	geoJsonData, err := exportimport.ExportToGeoJSON(layers)
+	if err != nil {
+		http.Error(w, "Export error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/geo+json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"georef_export.geojson\"")
+	_, _ = w.Write(geoJsonData)
+}
+
+func (s *Server) HandleExportKML(w http.ResponseWriter, r *http.Request) {
+	layers, err := s.gisRepo.GetAllGisLayers(r.Context(), 500)
+	if err != nil {
+		http.Error(w, "Error fetching layers: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	kmlData := exportimport.ExportToKML(layers)
+
+	w.Header().Set("Content-Type", "application/vnd.google-earth.kml+xml")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"georef_export.kml\"")
+	_, _ = w.Write([]byte(kmlData))
 }

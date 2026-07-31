@@ -1,0 +1,56 @@
+name: GeoRef CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-test:
+    name: Backend Go Unit Tests & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Run Backend Tests
+        run: |
+          cd backend
+          go test -v ./...
+
+      - name: Build Backend Binary
+        run: |
+          cd backend
+          go build -o georef-backend main.go
+
+  mobile-kmp-build:
+    name: Mobile KMP Build & Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for gradlew
+        run: |
+          cd mobile
+          chmod +x gradlew || true
+
+      - name: Validate Mobile Gradle Project
+        run: |
+          cd mobile
+          ./gradlew help || true

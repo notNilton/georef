@@ -2,20 +2,21 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nilbyte/georef/backend/internal/models"
 )
 
 type UserRepository struct {
-	db *sql.DB
+	pool *pgxpool.Pool
 }
 
-func NewUserRepository(db *sql.DB) *UserRepository {
-	return &UserRepository{db: db}
+func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
+	return &UserRepository{pool: pool}
 }
 
 func (r *UserRepository) CreateUser(ctx context.Context, name, email, passwordHash string) (*models.User, error) {
@@ -28,7 +29,7 @@ func (r *UserRepository) CreateUser(ctx context.Context, name, email, passwordHa
 	var user models.User
 	var createdAt, updatedAt time.Time
 
-	err := r.db.QueryRowContext(ctx, query, email, name, passwordHash).Scan(
+	err := r.pool.QueryRow(ctx, query, email, name, passwordHash).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Name,
@@ -55,7 +56,7 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (*mod
 	var user models.User
 	var createdAt, updatedAt time.Time
 
-	err := r.db.QueryRowContext(ctx, query, email).Scan(
+	err := r.pool.QueryRow(ctx, query, email).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Name,
@@ -64,7 +65,7 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (*mod
 		&updatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to fetch user by email: %w", err)

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"georef/backend/internal/models"
-	"georef/backend/internal/repository"
+	"github.com/nilbyte/georef/backend/internal/models"
+	"github.com/nilbyte/georef/backend/internal/repository"
 )
 
 type SyncService struct {
