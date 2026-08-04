@@ -20,6 +20,7 @@ Makefile              Task automation
 ## Documentation
 
 - [📋 Roadmap & TODOs](docs/TODO.md) - Planned features and project roadmap
+- [📱 Minimalist Field Spec](docs/MINIMALIST_FIELD_SPEC.md) - Specs for GPS averaging, area in hectares, and photo metadata
 - [📐 Architecture & Sync Protocol](docs/ARCHITECTURE_SYNC.md) - Offline-first architecture and GeoPDF processing details
 - [🚀 Publishing Guide](PUBLISHING.md) - Step-by-step guide for App Store & Google Play release
 
